@@ -511,12 +511,13 @@ function ClientEpisode({ data, ep, back }) {
       {interviews.length === 0 ? <p style={{ color: "var(--mute, #8A8272)", fontSize: 13 }}>No interviews logged yet.</p> : (
         <div style={{ border: "1px solid var(--line, #E3DBC9)", borderRadius: 12, overflow: "hidden", marginBottom: 30 }}>
           {interviews.map((i, idx) => (
-            <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: idx ? "1px solid var(--line, #E3DBC9)" : "none", background: "var(--surface, #fff)" }}>
+            <div key={i.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "12px 16px", borderTop: idx ? "1px solid var(--line, #E3DBC9)" : "none", background: "var(--surface, #fff)" }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{i.person}</div>
                 <div style={{ fontSize: 12, color: "var(--mute, #8A8272)" }}>{i.date || "date TBD"} &middot; {i.location || "location TBD"}</div>
+                {i.description && <div style={{ fontSize: 12.5, marginTop: 4, maxWidth: 480 }}>{i.description}</div>}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                 {i.viewingLink && <a href={i.viewingLink} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: GOLD }}>Watch</a>}
                 {i.transcriptLink && <a href={i.transcriptLink} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: GOLD }}>Transcript</a>}
               </div>
