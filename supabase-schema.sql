@@ -6,19 +6,19 @@ create table if not exists tracker_data (
   updated_at timestamptz default now()
 );
 
--- Allow the app's public (anon) key to read and write this table.
--- This mirrors how the tracker worked before: anyone with the link can view
--- and, if given producer access in-app, edit. There is no per-user login yet.
+-- Allow anyone to VIEW the data (this is what makes Client View work without
+-- a login), but only people who are signed in (producers/editors you've
+-- added as users) can write to it.
 alter table tracker_data enable row level security;
 
 create policy "public read" on tracker_data
   for select using (true);
 
-create policy "public write" on tracker_data
-  for insert with check (true);
+create policy "authenticated write" on tracker_data
+  for insert with check (auth.role() = 'authenticated');
 
-create policy "public update" on tracker_data
-  for update using (true);
+create policy "authenticated update" on tracker_data
+  for update using (auth.role() = 'authenticated');
 
 -- Enables live sync: when one person edits, everyone else viewing sees it
 -- update automatically without refreshing.

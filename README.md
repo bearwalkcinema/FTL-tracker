@@ -41,17 +41,38 @@ to everyone viewing the site, not just people in the same Claude chat.
 4. Wait for DNS to propagate (usually minutes, sometimes a few hours) — SSL
    is issued automatically once it does.
 
-## Important: no login yet
+## Important: producers now need a real login
 
-Right now Client View and Producer Backend are just two tabs in the same
-app — there's no password separating them, same as the Claude-artifact
-version. Anyone with the link can technically flip to Producer Backend and
-edit. That matches how it worked before, but if you want real access
-control (a producer login, a read-only client link), that's a follow-up
-step — let me know and I'll add Supabase Auth.
+Producer Backend is now locked behind a real sign-in (Supabase Auth) —
+Client View stays fully open with no account needed, but Producer Backend
+shows a sign-in screen until someone logs in. This is enforced at the
+database level too (not just hidden in the UI), so it's real security, not
+just a locked door with the key under the mat.
+
+### Adding your team as producers/editors
+
+1. In Supabase → **Authentication → Users → Add user**.
+2. Enter their email and set a temporary password (or use "Send invite
+   email" if you've set up email sending — otherwise just tell them the
+   password directly and have them change it later).
+3. Repeat for each producer/editor who needs access.
+4. In **Authentication → Settings**, make sure **"Enable sign ups"** is
+   turned **off** — this stops anyone else from creating their own account
+   through the login form. You control who gets in by adding them manually
+   in step 1–2.
 
 ## Migrating your existing data
 
-Once this is live, tell me and I'll help pull over whatever's already
-entered in the Claude version (episodes, interviews, production days) so
-you're not starting from scratch.
+1. In the **old Claude-artifact tracker**, go to **Producer Backend → Home**
+   and click **Export All Data**. Copy the whole block shown.
+2. On the **new standalone site**, sign in to Producer Backend, go to
+   **Home**, click **Import Data**, paste in what you copied, and click
+   **Import & Overwrite**. This replaces everything currently in the new
+   site with your real data.
+3. Double check Client View afterward — your real episodes, interviews, and
+   production days should now show up there.
+
+**Do this once, from the old tracker to the new one, then stop using the
+Claude-artifact version** — from that point on, the standalone site is the
+single source of truth. Producer Backend also has an **Export Data** button
+going forward, useful as a periodic backup even after migration.

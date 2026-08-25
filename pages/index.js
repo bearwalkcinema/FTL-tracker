@@ -554,11 +554,54 @@ function ProducerHome({ data, setTab, update }) {
   episodes.forEach((ep) => { if (!ep.nextMilestone) stuck.push(`${ep.title} has no next milestone set`); });
   const recent = data.milestones.filter((m) => m.kind === "recent").slice(-5).reverse();
   const upcoming = data.milestones.filter((m) => m.kind === "upcoming").slice(0, 5);
+  const [importModal, setImportModal] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
+  const [exportModal, setExportModal] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const exportText = JSON.stringify(data, null, 2);
+  const copyExport = async () => {
+    try { await navigator.clipboard.writeText(exportText); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+  };
+  const runImport = () => {
+    setImportError("");
+    try {
+      const parsed = JSON.parse(importText);
+      if (!parsed.episodes || !Array.isArray(parsed.episodes)) throw new Error("That doesn't look like tracker data (no episodes array found).");
+      update(parsed);
+      setImportModal(false);
+      setImportText("");
+    } catch (e) { setImportError(e.message || "Couldn't parse that — make sure you copied the entire export block."); }
+  };
 
   return (
     <div style={{ padding: 28 }}>
       <h1 className="serif" style={{ fontSize: 26, marginBottom: 4 }}>Producer Home</h1>
       <p style={{ color: MUTE, fontSize: 13, marginBottom: 24 }}>Source of truth for {data.seriesTitle}.</p>
+
+      <div style={{ background: "#fff", border: `1px solid ${GOLD}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <div className="mono" style={{ fontSize: 10.5, color: GOLD, textTransform: "uppercase", marginBottom: 8 }}>Data Migration &amp; Backup</div>
+        <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 10 }}>Import replaces everything currently in this tracker — use it once, to bring over data from the old Claude version. Export is for keeping a backup copy any time.</p>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => setImportModal(true)} style={{ background: INK, color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12.5 }}>Import Data</button>
+          <button onClick={() => setExportModal(true)} style={{ background: "#fff", color: INK, border: `1px solid ${LINE}`, borderRadius: 8, padding: "8px 16px", fontSize: 12.5 }}>Export Data</button>
+        </div>
+      </div>
+
+      {importModal && (
+        <Modal title="Import Data" onClose={() => setImportModal(false)}>
+          <p style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>Paste the entire export block copied from the old Claude tracker (Producer Backend &gt; Home &gt; Export All Data). This will overwrite everything currently here.</p>
+          <textarea value={importText} onChange={(e) => setImportText(e.target.value)} placeholder="Paste JSON here…" style={{ ...inputStyle, minHeight: 200, fontFamily: "monospace", fontSize: 11 }} />
+          {importError && <p style={{ color: CLAY, fontSize: 12, margin: "8px 0 0" }}>{importError}</p>}
+          <button onClick={runImport} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10 }}>Import &amp; Overwrite</button>
+        </Modal>
+      )}
+      {exportModal && (
+        <Modal title="Export All Data" onClose={() => setExportModal(false)}>
+          <textarea readOnly value={exportText} onFocus={(e) => e.target.select()} style={{ ...inputStyle, minHeight: 220, fontFamily: "monospace", fontSize: 11 }} />
+          <button onClick={copyExport} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10 }}>{copied ? "Copied!" : "Copy to Clipboard"}</button>
+        </Modal>
+      )}
 
       <div style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
         <div className="mono" style={{ fontSize: 10.5, color: GOLD, textTransform: "uppercase", marginBottom: 8 }}>Series Settings</div>
@@ -935,10 +978,39 @@ function ProducerMilestones({ data, update }) {
 }
 
 // ---------- App shell ----------
+function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (error) setError(error.message);
+  };
+  return (
+    <div style={{ maxWidth: 360, margin: "80px auto", padding: 28, background: "#fff", border: `1px solid ${LINE}`, borderRadius: 14 }}>
+      <h2 className="serif" style={{ fontSize: 22, marginBottom: 4 }}>Producer Sign In</h2>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 18 }}>Client View doesn't need an account — this is only for producers and editors.</p>
+      <form onSubmit={submit}>
+        <Field label="Email"><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} /></Field>
+        <Field label="Password"><input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} /></Field>
+        {error && <p style={{ color: CLAY, fontSize: 12, margin: "0 0 10px" }}>{error}</p>}
+        <button type="submit" disabled={loading} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13 }}>{loading ? "Signing in…" : "Sign In"}</button>
+      </form>
+      <p style={{ fontSize: 11, color: MUTE, marginTop: 14 }}>Don't have an account? Ask whoever set up this site to add you in Supabase.</p>
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(null);
   const [view, setView] = useState("client");
   const [clientDark, setClientDark] = useState(false);
+  const [session, setSession] = useState(null);
+  const [authLoaded, setAuthLoaded] = useState(false);
   const [clientEpisode, setClientEpisode] = useState(null);
   const [producerTab, setProducerTab] = useState("home");
   const [producerEpSel, setProducerEpSel] = useState(null);
@@ -977,6 +1049,12 @@ export default function App() {
       .subscribe();
 
     return () => { if (channel) supabase.removeChannel(channel); };
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthLoaded(true); });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   const update = async (next) => {
@@ -1021,14 +1099,22 @@ export default function App() {
         <div className={`container${clientDark ? " dark" : ""}`}>
           {ep ? <ClientEpisode data={data} ep={ep} back={() => setClientEpisode(null)} /> : <ClientOverview data={data} openEpisode={setClientEpisode} />}
         </div>
+      ) : !authLoaded ? (
+        <div style={{ padding: 40, color: MUTE }}>Checking sign-in…</div>
+      ) : !session ? (
+        <LoginScreen />
       ) : (
         <div className="producer-shell">
-          <div className="producer-sidebar" style={{ background: "#fff", borderRight: `1px solid ${LINE}`, paddingTop: 10 }}>
+          <div className="producer-sidebar" style={{ background: "#fff", borderRight: `1px solid ${LINE}`, paddingTop: 10, display: "flex", flexDirection: "column" }}>
             {[["home", "Home", HomeIcon], ["episodes", "Episodes", Layers], ["interviews", "Interviews", Users], ["days", "Production Days", Calendar], ["milestones", "Milestones", Sparkles]].map(([k, l, Icon]) => (
               <button key={k} onClick={() => setProducerTab(k)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 16px", background: producerTab === k ? CREAM_2 : "transparent", border: "none", fontSize: 12.5, textAlign: "left" }}>
                 <Icon size={14} /> {l}
               </button>
             ))}
+            <div style={{ marginTop: "auto", padding: 16, borderTop: `1px solid ${LINE}` }}>
+              <p style={{ fontSize: 10.5, color: MUTE, marginBottom: 6, wordBreak: "break-all" }}>{session.user.email}</p>
+              <button onClick={() => supabase.auth.signOut()} style={{ fontSize: 11.5, color: CLAY, background: "none", border: "none", textDecoration: "underline", padding: 0 }}>Sign out</button>
+            </div>
           </div>
           <div style={{ flex: 1, overflowY: "auto" }}>
             {producerTab === "home" && <ProducerHome data={data} setTab={setProducerTab} update={update} />}
