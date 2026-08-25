@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import {
   Film, MapPin, Users, Calendar, CheckCircle2, Circle, Clock,
   ChevronRight, ChevronLeft, X, Plus, Home as HomeIcon, Camera,
-  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon
+  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil
 } from "lucide-react";
 
 // ---------- Domain constants ----------
@@ -772,17 +772,19 @@ function Field({ label, children }) {
 }
 const inputStyle = { width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${LINE}`, fontSize: 13, background: "#fff" };
 
-function DataTable({ columns, rows, onDelete }) {
+function DataTable({ columns, rows, onDelete, onEdit }) {
   return (
     <div style={{ border: `1px solid ${LINE}`, borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns.length}, 1fr) 32px`, background: CREAM_2, padding: "8px 12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns.length}, 1fr) ${onEdit ? "32px " : ""}32px`, background: CREAM_2, padding: "8px 12px" }}>
         {columns.map((c) => <div key={c} className="mono" style={{ fontSize: 10, color: MUTE, textTransform: "uppercase" }}>{c}</div>)}
+        {onEdit && <div />}
         <div />
       </div>
       {rows.length === 0 && <div style={{ padding: 16, fontSize: 12.5, color: MUTE }}>Nothing added yet.</div>}
       {rows.map((r, idx) => (
-        <div key={r.id} style={{ display: "grid", gridTemplateColumns: `repeat(${columns.length}, 1fr) 32px`, padding: "9px 12px", borderTop: `1px solid ${LINE}`, fontSize: 12.5, alignItems: "center", background: "#fff" }}>
+        <div key={r.id} style={{ display: "grid", gridTemplateColumns: `repeat(${columns.length}, 1fr) ${onEdit ? "32px " : ""}32px`, padding: "9px 12px", borderTop: `1px solid ${LINE}`, fontSize: 12.5, alignItems: "center", background: "#fff" }}>
           {r.cells}
+          {onEdit && <button onClick={() => onEdit(r.id)} style={{ background: "none", border: "none", color: MUTE }}><Pencil size={13} /></button>}
           <button onClick={() => onDelete(r.id)} style={{ background: "none", border: "none", color: MUTE }}><X size={14} /></button>
         </div>
       ))}
@@ -828,11 +830,28 @@ function matchEpisode(data, str) {
 
 function ProducerInterviews({ data, update }) {
   const [modal, setModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
-  const [form, setForm] = useState({ person: "", episodeId: data.episodes[0]?.id, type: "Primary Voice", descriptor: "", org: "", status: "Not Started", date: "", location: "", runtime: "", viewingLink: "", transcriptLink: "" });
-  const save = () => { update({ ...data, interviews: [...data.interviews, { id: uid("iv"), ...form }] }); setModal(false); setForm({ ...form, person: "", date: "", location: "" }); };
+  const blankForm = { person: "", episodeId: data.episodes[0]?.id, type: "Primary Voice", descriptor: "", org: "", status: "Not Started", date: "", location: "", runtime: "", viewingLink: "", transcriptLink: "" };
+  const [form, setForm] = useState(blankForm);
+  const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
+  const openEdit = (id) => {
+    const iv = data.interviews.find((i) => i.id === id);
+    if (!iv) return;
+    setEditingId(id);
+    setForm({ ...blankForm, ...iv });
+    setModal(true);
+  };
+  const save = () => {
+    if (editingId) {
+      update({ ...data, interviews: data.interviews.map((i) => (i.id === editingId ? { ...i, ...form } : i)) });
+    } else {
+      update({ ...data, interviews: [...data.interviews, { id: uid("iv"), ...form }] });
+    }
+    setModal(false); setEditingId(null); setForm(blankForm);
+  };
   const del = (id) => update({ ...data, interviews: data.interviews.filter((i) => i.id !== id) });
   const importBulk = () => {
     const rows = parseBulkRows(bulkText);
@@ -859,12 +878,12 @@ function ProducerInterviews({ data, update }) {
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Interviews</h1>
       <div style={{ display: "flex", gap: 10 }}>
-        <AddBar label="Add Interview" onClick={() => setModal(true)} />
+        <AddBar label="Add Interview" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>
           Paste From Spreadsheet
         </button>
       </div>
-      <DataTable columns={["Person", "Episode", "Type", "Status", "Date"]} rows={data.interviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <StatusPill key="s" status={i.status} />, i.date] }))} onDelete={del} />
+      <DataTable columns={["Person", "Episode", "Type", "Status", "Date"]} rows={data.interviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <StatusPill key="s" status={i.status} />, i.date] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Paste Interviews From Spreadsheet" onClose={() => setBulkModal(false)}>
           <p style={{ fontSize: 12, color: MUTE, marginBottom: 10 }}>
@@ -880,7 +899,7 @@ function ProducerInterviews({ data, update }) {
         </Modal>
       )}
       {modal && (
-        <Modal title="Add Interview" onClose={() => setModal(false)}>
+        <Modal title={editingId ? "Edit Interview" : "Add Interview"} onClose={() => { setModal(false); setEditingId(null); }}>
           <Field label="Person"><input style={inputStyle} value={form.person} onChange={(e) => setForm({ ...form, person: e.target.value })} /></Field>
           <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
           <Field label="Type"><select style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option>Primary Voice</option><option>Supplementary Voice</option></select></Field>
@@ -891,7 +910,7 @@ function ProducerInterviews({ data, update }) {
           <Field label="Location"><input style={inputStyle} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
           <Field label="Viewing Link"><input style={inputStyle} value={form.viewingLink} onChange={(e) => setForm({ ...form, viewingLink: e.target.value })} /></Field>
           <Field label="Transcript Link"><input style={inputStyle} value={form.transcriptLink} onChange={(e) => setForm({ ...form, transcriptLink: e.target.value })} /></Field>
-          <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>Save Interview</button>
+          <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>{editingId ? "Save Changes" : "Save Interview"}</button>
         </Modal>
       )}
     </div>
@@ -900,11 +919,28 @@ function ProducerInterviews({ data, update }) {
 
 function ProducerDays({ data, update }) {
   const [modal, setModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
-  const [form, setForm] = useState({ episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", hours: "", notes: "" });
-  const save = () => { update({ ...data, productionDays: [...data.productionDays, { id: uid("pd"), ...form }] }); setModal(false); setForm({ ...form, date: "", city: "", location: "", hours: "" }); };
+  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", hours: "", notes: "" };
+  const [form, setForm] = useState(blankForm);
+  const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
+  const openEdit = (id) => {
+    const pd = data.productionDays.find((d) => d.id === id);
+    if (!pd) return;
+    setEditingId(id);
+    setForm({ ...blankForm, ...pd });
+    setModal(true);
+  };
+  const save = () => {
+    if (editingId) {
+      update({ ...data, productionDays: data.productionDays.map((d) => (d.id === editingId ? { ...d, ...form } : d)) });
+    } else {
+      update({ ...data, productionDays: [...data.productionDays, { id: uid("pd"), ...form }] });
+    }
+    setModal(false); setEditingId(null); setForm(blankForm);
+  };
   const del = (id) => update({ ...data, productionDays: data.productionDays.filter((d) => d.id !== id) });
   const importBulk = () => {
     const rows = parseBulkRows(bulkText);
@@ -926,12 +962,12 @@ function ProducerDays({ data, update }) {
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Production Days</h1>
       <div style={{ display: "flex", gap: 10 }}>
-        <AddBar label="Add Production Day" onClick={() => setModal(true)} />
+        <AddBar label="Add Production Day" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>
           Paste From Spreadsheet
         </button>
       </div>
-      <DataTable columns={["Episode", "Date", "City", "Country", "Location"]} rows={data.productionDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location] }))} onDelete={del} />
+      <DataTable columns={["Episode", "Date", "City", "Country", "Location"]} rows={data.productionDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Paste Production Days From Spreadsheet" onClose={() => setBulkModal(false)}>
           <p style={{ fontSize: 12, color: MUTE, marginBottom: 10 }}>
@@ -947,7 +983,7 @@ function ProducerDays({ data, update }) {
         </Modal>
       )}
       {modal && (
-        <Modal title="Add Production Day" onClose={() => setModal(false)}>
+        <Modal title={editingId ? "Edit Production Day" : "Add Production Day"} onClose={() => { setModal(false); setEditingId(null); }}>
           <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
           <Field label="Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
           <Field label="City"><input style={inputStyle} value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></Field>
@@ -957,7 +993,7 @@ function ProducerDays({ data, update }) {
           <Field label="Production Type"><input style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="Interview, B-roll, Observational..." /></Field>
           <Field label="Hours of Footage Captured"><input type="number" style={inputStyle} value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} /></Field>
           <Field label="Notes"><textarea style={inputStyle} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
-          <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>Save Production Day</button>
+          <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>{editingId ? "Save Changes" : "Save Production Day"}</button>
         </Modal>
       )}
     </div>
