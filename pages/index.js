@@ -801,8 +801,52 @@ function Modal({ title, onClose, children }) {
 }
 
 function parseBulkRows(text) {
-  return text.split("\n").map((line) => line.trim()).filter(Boolean)
-    .map((line) => (line.includes("\t") ? line.split("\t") : line.split(",")).map((c) => c.trim()));
+  // Tab-separated (typical when pasted from Excel/Sheets) — simple split is safe here
+  // since tabs rarely appear inside real field values.
+  if (text.includes("\t")) {
+    return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.split("\t").map((c) => c.trim()));
+  }
+  // Comma-separated (a real .csv file) — needs proper quote handling so commas
+  // inside a field (e.g. "Portland, OR") don't get treated as column breaks.
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ",") { row.push(field.trim()); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field.trim()); field = "";
+      if (row.some((x) => x !== "")) rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field.trim()); if (row.some((x) => x !== "")) rows.push(row); }
+  return rows;
+}
+function downloadTemplate(filename, headerRow, exampleRow) {
+  const csv = [headerRow, exampleRow].map((r) => r.map((c) => (c.includes(",") ? `"${c}"` : c)).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+function FileImportInput({ onText }) {
+  return (
+    <input type="file" accept=".csv,.tsv,.txt" style={{ fontSize: 12, marginBottom: 10 }}
+      onChange={(e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => onText(evt.target.result);
+        reader.readAsText(file);
+        e.target.value = "";
+      }} />
+  );
 }
 function matchEpisode(data, str) {
   if (!str) return null;
@@ -864,22 +908,30 @@ function ProducerInterviews({ data, update }) {
       <div style={{ display: "flex", gap: 10 }}>
         <AddBar label="Add Interview" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>
-          Paste From Spreadsheet
+          Import CSV
         </button>
       </div>
       <DataTable columns={["Person", "Episode", "Type", "Description", "Date"]} rows={data.interviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <span key="d" style={{ color: MUTE, fontSize: 11.5 }}>{(i.description || "—").slice(0, 40)}{(i.description || "").length > 40 ? "…" : ""}</span>, i.date] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
-        <Modal title="Paste Interviews From Spreadsheet" onClose={() => setBulkModal(false)}>
-          <p style={{ fontSize: 12, color: MUTE, marginBottom: 10 }}>
-            Copy rows from Excel or Google Sheets and paste them below — tabs are detected automatically. One interview per line, in this column order:
+        <Modal title="Import Interviews" onClose={() => setBulkModal(false)}>
+          <button type="button" onClick={() => downloadTemplate("interviews-template.csv", ["Person", "Episode", "Type", "Description", "Date", "Location", "Viewing Link", "Transcript Link"], ["Maria Alvarez", "Episode 1", "Primary Voice", "Discussed her early years volunteering", "2026-03-14", "Portland, OR", "", ""])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
+            Download a blank CSV template
+          </button>
+          <p style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>
+            Open that template in Excel or Google Sheets, fill in your rows, save/export as CSV, then upload it below. Columns:
           </p>
           <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>
             Person, Episode (title or number), Type (Primary/Supplementary), Description, Date, Location, Viewing Link, Transcript Link
           </p>
-          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Person and Episode are required — leave other columns blank if you don't have them yet. A header row is fine, it's skipped automatically.</p>
-          <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"Maria Alvarez\tEpisode 1\tPrimary Voice\tComplete\t2026-03-14\tPortland, OR"} style={{ ...inputStyle, minHeight: 140, fontFamily: "monospace", fontSize: 12 }} />
+          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Person and Episode are required. Header row is fine, it's skipped automatically.</p>
+          <FileImportInput onText={setBulkText} />
+          <details style={{ marginBottom: 10 }}>
+            <summary style={{ fontSize: 11.5, color: MUTE, cursor: "pointer" }}>Or paste rows directly instead</summary>
+            <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"Maria Alvarez\tEpisode 1\tPrimary Voice\tDiscussed her early years\t2026-03-14\tPortland, OR"} style={{ ...inputStyle, minHeight: 100, fontFamily: "monospace", fontSize: 12, marginTop: 8 }} />
+          </details>
+          {bulkText && <p style={{ fontSize: 11.5, color: MUTE, margin: "0 0 8px" }}>{parseBulkRows(bulkText).length} row(s) ready to import.</p>}
           {bulkResult && <p style={{ fontSize: 12, color: bulkResult.skipped ? CLAY : SAGE, margin: "8px 0 0" }}>Imported {bulkResult.added}. {bulkResult.skipped > 0 && `${bulkResult.skipped} skipped (missing name or unmatched episode).`}</p>}
-          <button onClick={importBulk} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10 }}>Import Rows</button>
+          <button onClick={importBulk} disabled={!bulkText} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10, opacity: bulkText ? 1 : 0.5 }}>Import Rows</button>
         </Modal>
       )}
       {modal && (
@@ -933,7 +985,7 @@ function ProducerDays({ data, update }) {
       if (/^episode$/i.test(cols[0] || "")) return; // skip header row
       const episodeId = matchEpisode(data, cols[0]);
       if (!episodeId) { skipped++; return; }
-      newDays.push({ id: uid("pd"), episodeId, date: cols[1] || "", city: cols[2] || "", state: cols[3] || "", country: cols[4] || "", location: cols[5] || "", type: cols[6] || "", hours: cols[7] || "", notes: "" });
+      newDays.push({ id: uid("pd"), episodeId, date: cols[1] || "", city: cols[2] || "", state: cols[3] || "", country: cols[4] || "", location: cols[5] || "", type: cols[6] || "", notes: "" });
       added++;
     });
     update({ ...data, productionDays: [...data.productionDays, ...newDays] });
@@ -947,22 +999,30 @@ function ProducerDays({ data, update }) {
       <div style={{ display: "flex", gap: 10 }}>
         <AddBar label="Add Production Day" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>
-          Paste From Spreadsheet
+          Import CSV
         </button>
       </div>
       <DataTable columns={["Episode", "Date", "City", "Country", "Location"]} rows={data.productionDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
-        <Modal title="Paste Production Days From Spreadsheet" onClose={() => setBulkModal(false)}>
-          <p style={{ fontSize: 12, color: MUTE, marginBottom: 10 }}>
-            Copy rows from Excel or Google Sheets and paste them below. One production day per line, in this column order:
+        <Modal title="Import Production Days" onClose={() => setBulkModal(false)}>
+          <button type="button" onClick={() => downloadTemplate("production-days-template.csv", ["Episode", "Date", "City", "State", "Country", "Location", "Type"], ["Episode 1", "2026-03-14", "Portland", "OR", "USA", "Community Center", "Interview"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
+            Download a blank CSV template
+          </button>
+          <p style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>
+            Open that template in Excel or Google Sheets, fill in your rows, save/export as CSV, then upload it below. Columns:
           </p>
           <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>
-            Episode (title or number), Date, City, State, Country, Location, Type, Hours
+            Episode (title or number), Date, City, State, Country, Location, Type
           </p>
-          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Episode is required — leave others blank if unknown. A header row is fine, it's skipped automatically.</p>
-          <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"Episode 1\t2026-03-14\tPortland\tOR\tUSA\tCommunity Center\tInterview\t6"} style={{ ...inputStyle, minHeight: 140, fontFamily: "monospace", fontSize: 12 }} />
+          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Episode is required. Header row is fine, it's skipped automatically.</p>
+          <FileImportInput onText={setBulkText} />
+          <details style={{ marginBottom: 10 }}>
+            <summary style={{ fontSize: 11.5, color: MUTE, cursor: "pointer" }}>Or paste rows directly instead</summary>
+            <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"Episode 1\t2026-03-14\tPortland\tOR\tUSA\tCommunity Center\tInterview"} style={{ ...inputStyle, minHeight: 100, fontFamily: "monospace", fontSize: 12, marginTop: 8 }} />
+          </details>
+          {bulkText && <p style={{ fontSize: 11.5, color: MUTE, margin: "0 0 8px" }}>{parseBulkRows(bulkText).length} row(s) ready to import.</p>}
           {bulkResult && <p style={{ fontSize: 12, color: bulkResult.skipped ? CLAY : SAGE, margin: "8px 0 0" }}>Imported {bulkResult.added}. {bulkResult.skipped > 0 && `${bulkResult.skipped} skipped (unmatched episode).`}</p>}
-          <button onClick={importBulk} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10 }}>Import Rows</button>
+          <button onClick={importBulk} disabled={!bulkText} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10, opacity: bulkText ? 1 : 0.5 }}>Import Rows</button>
         </Modal>
       )}
       {modal && (
