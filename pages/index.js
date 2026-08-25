@@ -139,6 +139,13 @@ function StyleSheet() {
         .ftlo .topbar { padding: 8px 12px !important; }
         .ftlo .view-switch button { padding: 5px 9px !important; font-size: 11px !important; }
       }
+      @media (max-width: 640px) {
+        .ftlo .episodes-header { flex-direction: column; align-items: center; text-align: center; }
+        .ftlo .episodes-header-right { flex-direction: column; width: 100%; align-items: center; }
+        .ftlo .phase-legend { justify-content: center; flex-wrap: wrap; row-gap: 6px; }
+        .ftlo .mode-toggle { width: 100%; max-width: 260px; }
+        .ftlo .mode-toggle button { flex: 1; }
+      }
       .ftlo .card-hover:active { transform: translateY(-3px) scale(0.99) rotate(0deg); transition: transform .1s ease; }
       @keyframes galleryShift { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
       @keyframes sparkleSpin { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(14deg) scale(1.15); } }
@@ -355,11 +362,11 @@ function ClientOverview({ data, openEpisode }) {
 
       {/* Episode cards */}
       <div style={{ padding: "8px 40px 40px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
+        <div className="episodes-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10, marginBottom: 4 }}>
           <h2 className="serif" style={{ fontSize: 22, margin: 0 }}>Episodes</h2>
-          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+          <div className="episodes-header-right" style={{ display: "flex", gap: 16, alignItems: "center" }}>
             {mode === "overview" && (
-              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+              <div className="phase-legend" style={{ display: "flex", gap: 14, alignItems: "center" }}>
                 {PHASES.map((p) => (
                   <div key={p.key} style={{ display: "flex", alignItems: "center", gap: 5 }}>
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: PHASE_COLORS[p.key], display: "inline-block" }} />
@@ -368,7 +375,7 @@ function ClientOverview({ data, openEpisode }) {
                 ))}
               </div>
             )}
-            <div style={{ display: "flex", gap: 3, background: "var(--bg2, #F1EBDD)", borderRadius: 8, padding: 3 }}>
+            <div className="mode-toggle" style={{ display: "flex", gap: 3, background: "var(--bg2, #F1EBDD)", borderRadius: 8, padding: 3 }}>
               {["overview", "data"].map((m) => (
                 <button key={m} onClick={() => setMode(m)} style={{ padding: "5px 12px", borderRadius: 6, border: "none", fontSize: 11.5, background: mode === m ? "var(--ink, #241F1A)" : "transparent", color: mode === m ? "var(--bg, #F8F4EC)" : "var(--mute, #8A8272)" }}>
                   {m === "overview" ? "Overview" : "Data View"}
