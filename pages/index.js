@@ -665,15 +665,27 @@ function ProducerEpisodes({ data, update, selected, setSelected }) {
   const ep = data.episodes.find((e) => e.id === selected) || data.episodes[0];
   const updateEp = (patch) => update({ ...data, episodes: data.episodes.map((e) => (e.id === ep.id ? { ...e, ...patch } : e)) });
   const updatePhaseItem = (phaseKey, item, val) => updateEp({ phases: { ...ep.phases, [phaseKey]: { ...ep.phases[phaseKey], [item]: val } } });
+  const moveToPosition = (fromIndex, toPosition) => {
+    const arr = [...data.episodes];
+    const [item] = arr.splice(fromIndex, 1);
+    arr.splice(toPosition - 1, 0, item);
+    update({ ...data, episodes: arr.map((e, i) => ({ ...e, number: i + 1 })) });
+  };
 
   return (
     <div style={{ display: "flex", height: "100%" }}>
-      <div style={{ width: 190, borderRight: `1px solid ${LINE}`, overflowY: "auto", flexShrink: 0 }}>
-        {data.episodes.map((e) => (
-          <button key={e.id} onClick={() => setSelected(e.id)} style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px", background: e.id === ep.id ? CREAM_2 : "transparent", border: "none", borderBottom: `1px solid ${LINE}`, fontSize: 12.5 }}>
-            <div style={{ fontWeight: 600 }}>{e.title}</div>
-            <div className="mono" style={{ fontSize: 10, color: MUTE }}>{episodeCompletion(e)}% &middot; {currentPhaseLabels(e).join(" + ")}</div>
-          </button>
+      <div style={{ width: 210, borderRight: `1px solid ${LINE}`, overflowY: "auto", flexShrink: 0 }}>
+        {data.episodes.map((e, idx) => (
+          <div key={e.id} style={{ display: "flex", alignItems: "center", background: e.id === ep.id ? CREAM_2 : "transparent", borderBottom: `1px solid ${LINE}` }}>
+            <select value={idx + 1} onChange={(ev) => moveToPosition(idx, Number(ev.target.value))} onClick={(ev) => ev.stopPropagation()}
+              style={{ fontSize: 11, border: "none", background: "transparent", color: MUTE, padding: "10px 4px 10px 10px", cursor: "pointer" }}>
+              {data.episodes.map((_, i) => <option key={i} value={i + 1}>{i + 1}</option>)}
+            </select>
+            <button onClick={() => setSelected(e.id)} style={{ flex: 1, display: "block", textAlign: "left", padding: "10px 14px 10px 4px", background: "transparent", border: "none", fontSize: 12.5 }}>
+              <div style={{ fontWeight: 600 }}>{e.title}</div>
+              <div className="mono" style={{ fontSize: 10, color: MUTE }}>{episodeCompletion(e)}% &middot; {currentPhaseLabels(e).join(" + ")}</div>
+            </button>
+          </div>
         ))}
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
