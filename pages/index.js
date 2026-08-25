@@ -134,6 +134,11 @@ function StyleSheet() {
         .ftlo .producer-sidebar { width: 100%; display: flex; overflow-x: auto; border-right: none !important; border-bottom: 1px solid ${LINE}; padding-top: 0 !important; }
         .ftlo .producer-sidebar button { white-space: nowrap; border-bottom: none !important; }
       }
+      @media (max-width: 480px) {
+        .ftlo .topbar-label { display: none; }
+        .ftlo .topbar { padding: 8px 12px !important; }
+        .ftlo .view-switch button { padding: 5px 9px !important; font-size: 11px !important; }
+      }
       .ftlo .card-hover:active { transform: translateY(-3px) scale(0.99) rotate(0deg); transition: transform .1s ease; }
       @keyframes galleryShift { 0% { background-position: 0% 50%; } 100% { background-position: 100% 50%; } }
       @keyframes sparkleSpin { 0%, 100% { transform: rotate(0deg) scale(1); } 50% { transform: rotate(14deg) scale(1.15); } }
@@ -476,7 +481,7 @@ function ClientEpisode({ data, ep, back }) {
         <p style={{ margin: 0, fontSize: 14.5 }}>{ep.nextMilestone}</p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, margin: "24px 0" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10, margin: "24px 0" }}>
         {PHASES.map((p) => (
           <div key={p.key} style={{ background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 10, padding: 12 }}>
             <div className="mono" style={{ fontSize: 9.5, color: "var(--mute, #8A8272)", marginBottom: 6 }}>{p.label.toUpperCase()}</div>
@@ -789,7 +794,7 @@ function AddBar({ label, onClick }) {
 function Modal({ title, onClose, children }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(36,31,26,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 22, width: 420, maxHeight: "85vh", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 22, width: "min(420px, 92vw)", maxHeight: "85vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
           <span className="serif" style={{ fontSize: 18, fontWeight: 600 }}>{title}</span>
           <button onClick={onClose} style={{ background: "none", border: "none" }}><X size={18} /></button>
@@ -1073,12 +1078,12 @@ export default function App() {
     <div className="ftlo" style={{ background: clientDark && view === "client" ? "#17140F" : CREAM, minHeight: "100%", transition: "background .3s ease" }}>
       <StyleSheet />
       {/* Top switcher */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", background: INK, color: CREAM }}>
+      <div className="topbar" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, padding: "10px 20px", background: INK, color: CREAM }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <img src={LOGO_SRC} alt={data.seriesTitle} style={{ height: 18, width: "auto", filter: "invert(1) brightness(1.6)" }} />
-          <span className="mono" style={{ fontSize: 10.5, color: MUTE, textTransform: "uppercase" }}>Tracker</span>
+          <span className="mono topbar-label" style={{ fontSize: 10.5, color: MUTE, textTransform: "uppercase" }}>Tracker</span>
         </div>
-        <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 8, padding: 3 }}>
+        <div className="view-switch" style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 8, padding: 3 }}>
           {["client", "producer"].map((v) => (
             <button key={v} onClick={() => setView(v)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, background: view === v ? GOLD : "transparent", color: view === v ? "#fff" : CREAM }}>
               {v === "client" ? "Client View" : "Producer Backend"}
@@ -1091,7 +1096,7 @@ export default function App() {
               {clientDark ? <Sun size={13} /> : <Moon size={13} />}
             </button>
           )}
-          <span className="mono" style={{ fontSize: 10, opacity: 0.5 }}>{saving ? "saving…" : "synced"}</span>
+          <span className="mono topbar-label" style={{ fontSize: 10, opacity: 0.5 }}>{saving ? "saving…" : "synced"}</span>
         </div>
       </div>
 
