@@ -70,7 +70,7 @@ function makeEpisode(n) {
   return {
     id: uid("ep"), number: n, title: `Episode ${n}`, champion: "", producer1: "Brian Tortora", producer2: "Daniela Goncalves", editor: "Daniel Latimer",
     director: "", execProducer1: "Brian Tortora", execProducer2: "Daniela Goncalves",
-    phaseOverride: "Auto", activePhases: n === 1 ? ["Production", "Post-Production"] : [], accentColor: CHAMPION_ACCENTS[n - 1] || "", coverImageUrl: "", dataSizeTB: "",
+    phaseOverride: "Auto", activePhases: n === 1 ? ["Production", "Post-Production"] : [], accentColor: CHAMPION_ACCENTS[n - 1] || "", coverImageUrl: "", dataSizeTB: "", hoursFootage: "",
     priority: "Medium", targetDate: "", statusSummary: "Not yet started.", nextMilestone: "Kick off discovery.",
     phases,
   };
@@ -225,7 +225,7 @@ function episodeStats(ep, data) {
     cities: new Set(days.map((d) => d.city).filter(Boolean)).size,
     states: new Set(days.map((d) => d.state).filter(Boolean)).size,
     countries: new Set(days.map((d) => d.country).filter(Boolean)).size,
-    hours: days.reduce((a, d) => a + (Number(d.hours) || 0), 0),
+    hours: Number(ep.hoursFootage) || 0,
   };
 }
 
@@ -308,7 +308,7 @@ function ClientOverview({ data, openEpisode }) {
   const cities = new Set(data.productionDays.map((d) => d.city).filter(Boolean));
   const states = new Set(data.productionDays.map((d) => d.state).filter(Boolean));
   const countries = new Set(data.productionDays.map((d) => d.country).filter(Boolean));
-  const hours = data.productionDays.reduce((a, d) => a + (Number(d.hours) || 0), 0);
+  const hours = data.episodes.reduce((a, e) => a + (Number(e.hoursFootage) || 0), 0);
   const dataTB = data.episodes.reduce((a, e) => a + (Number(e.dataSizeTB) || 0), 0).toFixed(1);
 
   const byCountry = {};
@@ -454,9 +454,8 @@ function ClientEpisode({ data, ep, back }) {
   const citySet = new Set(days.map((d) => d.city).filter(Boolean));
   const stateSet = new Set(days.map((d) => d.state).filter(Boolean));
   const countrySet = new Set(days.map((d) => d.country).filter(Boolean));
-  const hours = days.reduce((a, d) => a + (Number(d.hours) || 0), 0);
+  const hours = Number(ep.hoursFootage) || 0;
   const supp = interviews.filter((i) => i.type === "Supplementary Voice").length;
-  const milestones = data.milestones.filter((m) => m.episodeId === ep.id);
 
   return (
     <div style={{ padding: "32px 40px 56px" }}>
@@ -525,19 +524,6 @@ function ClientEpisode({ data, ep, back }) {
           ))}
         </div>
       )}
-
-      <h2 className="serif" style={{ fontSize: 20, marginBottom: 12 }}>Timeline</h2>
-      {milestones.length === 0 ? <p style={{ color: "var(--mute, #8A8272)", fontSize: 13 }}>No milestones logged yet.</p> : (
-        <div style={{ borderLeft: "2px solid var(--line, #E3DBC9)", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 14 }}>
-          {milestones.sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map((m) => (
-            <div key={m.id} style={{ position: "relative" }}>
-              <div style={{ position: "absolute", left: -23, top: 4, width: 9, height: 9, borderRadius: 9, background: m.kind === "recent" ? SAGE : CLAY }} />
-              <div className="mono" style={{ fontSize: 10, color: "var(--mute, #8A8272)" }}>{m.date}</div>
-              <div style={{ fontSize: 13.5 }}>{m.text}</div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -562,7 +548,6 @@ function ChecklistGrid({ items, values, onChange }) {
 function ProducerHome({ data, setTab, update }) {
   const episodes = data.episodes;
   const stuck = [];
-  data.interviews.forEach((i) => { if (i.status && i.status !== "Complete" && i.type === "Primary Voice") stuck.push(`${i.person} (primary interview) — ${i.status}`); });
   episodes.forEach((ep) => { if (!ep.nextMilestone) stuck.push(`${ep.title} has no next milestone set`); });
   const recent = data.milestones.filter((m) => m.kind === "recent").slice(-5).reverse();
   const upcoming = data.milestones.filter((m) => m.kind === "upcoming").slice(0, 5);
@@ -707,6 +692,7 @@ function ProducerEpisodes({ data, update, selected, setSelected }) {
           </Field>
           <Field label="Target Completion Date"><input type="date" value={ep.targetDate} onChange={(e) => updateEp({ targetDate: e.target.value })} style={inputStyle} /></Field>
           <Field label="Data Size Captured (TB)"><input type="number" step="0.1" value={ep.dataSizeTB || ""} onChange={(e) => updateEp({ dataSizeTB: e.target.value })} style={inputStyle} /></Field>
+          <Field label="Hours of Footage Captured"><input type="number" step="0.1" value={ep.hoursFootage || ""} onChange={(e) => updateEp({ hoursFootage: e.target.value })} style={inputStyle} /></Field>
           <Field label="Current Phase(s) — shown to client">
             <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "#fff", border: `1px solid ${LINE}`, borderRadius: 8, padding: 10 }}>
               {[...PHASES.map((p) => p.label), "Complete"].map((label) => {
@@ -834,7 +820,7 @@ function ProducerInterviews({ data, update }) {
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
-  const blankForm = { person: "", episodeId: data.episodes[0]?.id, type: "Primary Voice", descriptor: "", org: "", status: "Not Started", date: "", location: "", runtime: "", viewingLink: "", transcriptLink: "" };
+  const blankForm = { person: "", episodeId: data.episodes[0]?.id, type: "Primary Voice", descriptor: "", description: "", date: "", location: "", runtime: "", viewingLink: "", transcriptLink: "" };
   const [form, setForm] = useState(blankForm);
   const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
   const openEdit = (id) => {
@@ -864,9 +850,7 @@ function ProducerInterviews({ data, update }) {
       if (!person || !episodeId) { skipped++; return; }
       const typeRaw = (cols[2] || "").toLowerCase();
       const type = typeRaw.includes("supp") ? "Supplementary Voice" : "Primary Voice";
-      const statusRaw = cols[3] || "";
-      const status = STATUS_OPTIONS.find((s) => s.toLowerCase() === statusRaw.toLowerCase()) || "Not Started";
-      newInterviews.push({ id: uid("iv"), person, episodeId, type, descriptor: "", org: "", status, date: cols[4] || "", location: cols[5] || "", runtime: "", viewingLink: cols[6] || "", transcriptLink: cols[7] || "" });
+      newInterviews.push({ id: uid("iv"), person, episodeId, type, descriptor: "", description: cols[3] || "", date: cols[4] || "", location: cols[5] || "", runtime: "", viewingLink: cols[6] || "", transcriptLink: cols[7] || "" });
       added++;
     });
     update({ ...data, interviews: [...data.interviews, ...newInterviews] });
@@ -883,14 +867,14 @@ function ProducerInterviews({ data, update }) {
           Paste From Spreadsheet
         </button>
       </div>
-      <DataTable columns={["Person", "Episode", "Type", "Status", "Date"]} rows={data.interviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <StatusPill key="s" status={i.status} />, i.date] }))} onDelete={del} onEdit={openEdit} />
+      <DataTable columns={["Person", "Episode", "Type", "Description", "Date"]} rows={data.interviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <span key="d" style={{ color: MUTE, fontSize: 11.5 }}>{(i.description || "—").slice(0, 40)}{(i.description || "").length > 40 ? "…" : ""}</span>, i.date] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Paste Interviews From Spreadsheet" onClose={() => setBulkModal(false)}>
           <p style={{ fontSize: 12, color: MUTE, marginBottom: 10 }}>
             Copy rows from Excel or Google Sheets and paste them below — tabs are detected automatically. One interview per line, in this column order:
           </p>
           <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>
-            Person, Episode (title or number), Type (Primary/Supplementary), Status, Date, Location, Viewing Link, Transcript Link
+            Person, Episode (title or number), Type (Primary/Supplementary), Description, Date, Location, Viewing Link, Transcript Link
           </p>
           <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Person and Episode are required — leave other columns blank if you don't have them yet. A header row is fine, it's skipped automatically.</p>
           <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} placeholder={"Maria Alvarez\tEpisode 1\tPrimary Voice\tComplete\t2026-03-14\tPortland, OR"} style={{ ...inputStyle, minHeight: 140, fontFamily: "monospace", fontSize: 12 }} />
@@ -904,8 +888,7 @@ function ProducerInterviews({ data, update }) {
           <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
           <Field label="Type"><select style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}><option>Primary Voice</option><option>Supplementary Voice</option></select></Field>
           {form.type === "Supplementary Voice" && <Field label="Descriptor"><select style={inputStyle} value={form.descriptor} onChange={(e) => setForm({ ...form, descriptor: e.target.value })}><option value="">—</option>{["Family","Friend","Colleague","Community member","Participant","Expert","Organization member","Other"].map((d)=><option key={d}>{d}</option>)}</select></Field>}
-          <Field label="Organization"><input style={inputStyle} value={form.org} onChange={(e) => setForm({ ...form, org: e.target.value })} /></Field>
-          <Field label="Status"><select style={inputStyle} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{STATUS_OPTIONS.map((s) => <option key={s}>{s}</option>)}</select></Field>
+          <Field label="Description"><textarea style={{ ...inputStyle, minHeight: 60 }} placeholder="What was this interview about?" value={form.description || ""} onChange={(e) => setForm({ ...form, description: e.target.value })} /></Field>
           <Field label="Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
           <Field label="Location"><input style={inputStyle} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
           <Field label="Viewing Link"><input style={inputStyle} value={form.viewingLink} onChange={(e) => setForm({ ...form, viewingLink: e.target.value })} /></Field>
@@ -923,7 +906,7 @@ function ProducerDays({ data, update }) {
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
-  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", hours: "", notes: "" };
+  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", notes: "" };
   const [form, setForm] = useState(blankForm);
   const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
   const openEdit = (id) => {
@@ -991,7 +974,6 @@ function ProducerDays({ data, update }) {
           <Field label="Country"><input style={inputStyle} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></Field>
           <Field label="Location Name"><input style={inputStyle} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
           <Field label="Production Type"><input style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="Interview, B-roll, Observational..." /></Field>
-          <Field label="Hours of Footage Captured"><input type="number" style={inputStyle} value={form.hours} onChange={(e) => setForm({ ...form, hours: e.target.value })} /></Field>
           <Field label="Notes"><textarea style={inputStyle} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
           <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>{editingId ? "Save Changes" : "Save Production Day"}</button>
         </Modal>
@@ -1009,7 +991,7 @@ function ProducerMilestones({ data, update }) {
   return (
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Milestones</h1>
-      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>These populate each episode's client-facing Timeline and the Producer Home overview.</p>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>These populate the Producer Home overview panels (Recently Happened / Coming Up).</p>
       <AddBar label="Add Milestone" onClick={() => setModal(true)} />
       <DataTable columns={["Episode", "Kind", "Text", "Date"]} rows={data.milestones.map((m) => ({ id: m.id, cells: [data.episodes.find((e) => e.id === m.episodeId)?.title || "Series-wide", m.kind, m.text, m.date] }))} onDelete={del} />
       {modal && (
@@ -1082,7 +1064,7 @@ export default function App() {
         loaded.episodes = loaded.episodes.map((e, idx) => ({
           producer1: "Brian Tortora", producer2: "Daniela Goncalves",
           execProducer1: "Brian Tortora", execProducer2: "Daniela Goncalves",
-          director: "", activePhases: idx === 0 ? ["Production", "Post-Production"] : [], accentColor: CHAMPION_ACCENTS[idx] || "", coverImageUrl: "", dataSizeTB: "", ...e,
+          director: "", activePhases: idx === 0 ? ["Production", "Post-Production"] : [], accentColor: CHAMPION_ACCENTS[idx] || "", coverImageUrl: "", dataSizeTB: "", hoursFootage: "", ...e,
           editor: e.editor || "Daniel Latimer",
         }));
         setData(loaded);
