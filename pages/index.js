@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import {
   Film, MapPin, Users, Calendar, CheckCircle2, Circle, Clock,
   ChevronRight, ChevronLeft, X, Plus, Home as HomeIcon, Camera,
-  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil
+  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil, ChevronDown
 } from "lucide-react";
 
 // ---------- Domain constants ----------
@@ -297,6 +297,7 @@ function EpisodeDataTable({ data, openEpisode }) {
 // ---------- Client-facing views ----------
 function ClientOverview({ data, openEpisode }) {
   const [mode, setMode] = useState("overview");
+  const [progressOpen, setProgressOpen] = useState(false);
   const episodes = data.episodes;
   const seriesPct = Math.round(episodes.reduce((a, e) => a + episodeCompletion(e), 0) / episodes.length);
   const seriesPhaseAvg = {};
@@ -317,6 +318,12 @@ function ClientOverview({ data, openEpisode }) {
     byCountry[d.country] = byCountry[d.country] || new Set();
     if (d.city) byCountry[d.country].add(d.city);
   });
+
+  const today = new Date();
+  const msDay = 24 * 60 * 60 * 1000;
+  const parseDate = (s) => { if (!s) return null; const d = new Date(s + "T00:00:00"); return isNaN(d) ? null : d; };
+  const last30 = data.milestones.filter((m) => { const d = parseDate(m.date); return d && (today - d) >= 0 && (today - d) <= 30 * msDay; }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const next30 = data.milestones.filter((m) => { const d = parseDate(m.date); return d && (d - today) > 0 && (d - today) <= 30 * msDay; }).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
 
   return (
     <div>
@@ -440,6 +447,41 @@ function ClientOverview({ data, openEpisode }) {
           </div>
         </div>
       )}
+
+      {/* Recent Progress */}
+      <div style={{ padding: "0 40px 56px" }}>
+        <button onClick={() => setProgressOpen((o) => !o)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 14, padding: "18px 22px", cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Sparkles size={17} color={GOLD} />
+            <span className="serif" style={{ fontSize: 19, fontWeight: 600, color: "var(--ink, #241F1A)" }}>Recent Progress</span>
+          </div>
+          <ChevronDown size={18} color="var(--mute, #8A8272)" style={{ transform: progressOpen ? "rotate(180deg)" : "none", transition: "transform .25s ease" }} />
+        </button>
+        {progressOpen && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 16 }}>
+            <div>
+              <h3 className="mono" style={{ fontSize: 11, color: "var(--mute, #8A8272)", textTransform: "uppercase", marginBottom: 10 }}>Last 30 Days</h3>
+              {last30.length === 0 && <p style={{ color: "var(--mute, #8A8272)", fontSize: 13 }}>Nothing logged in the last 30 days.</p>}
+              {last30.map((m) => (
+                <div key={m.id} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--line, #E3DBC9)" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 8, background: SAGE, marginTop: 5, flexShrink: 0 }} />
+                  <div><div style={{ fontSize: 13.5 }}>{m.text}</div><div className="mono" style={{ fontSize: 10, color: "var(--mute, #8A8272)" }}>{m.date}{m.episodeId && (" · " + (data.episodes.find((e) => e.id === m.episodeId)?.title || ""))}</div></div>
+                </div>
+              ))}
+            </div>
+            <div>
+              <h3 className="mono" style={{ fontSize: 11, color: "var(--mute, #8A8272)", textTransform: "uppercase", marginBottom: 10 }}>Next 30 Days</h3>
+              {next30.length === 0 && <p style={{ color: "var(--mute, #8A8272)", fontSize: 13 }}>Nothing scheduled in the next 30 days.</p>}
+              {next30.map((m) => (
+                <div key={m.id} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid var(--line, #E3DBC9)" }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 8, background: CLAY, marginTop: 5, flexShrink: 0 }} />
+                  <div><div style={{ fontSize: 13.5 }}>{m.text}</div><div className="mono" style={{ fontSize: 10, color: "var(--mute, #8A8272)" }}>{m.date}{m.episodeId && (" · " + (data.episodes.find((e) => e.id === m.episodeId)?.title || ""))}</div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1063,8 +1105,8 @@ function ProducerMilestones({ data, update }) {
 
   return (
     <div style={{ padding: 24 }}>
-      <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Milestones</h1>
-      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>These populate the Producer Home overview panels (Recently Happened / Coming Up).</p>
+      <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Recent Progress</h1>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>These need a date to show up on Client View's "Recent Progress" card — anything dated within the last 30 days shows under "Last 30 Days," anything dated within the next 30 days shows under "Next 30 Days." They also feed the Producer Home overview panels.</p>
       <AddBar label="Add Milestone" onClick={() => setModal(true)} />
       <DataTable columns={["Episode", "Kind", "Text", "Date"]} rows={data.milestones.map((m) => ({ id: m.id, cells: [data.episodes.find((e) => e.id === m.episodeId)?.title || "Series-wide", m.kind, m.text, m.date] }))} onDelete={del} />
       {modal && (
@@ -1209,7 +1251,7 @@ export default function App() {
       ) : (
         <div className="producer-shell">
           <div className="producer-sidebar" style={{ background: "#fff", borderRight: `1px solid ${LINE}`, paddingTop: 10, display: "flex", flexDirection: "column" }}>
-            {[["home", "Home", HomeIcon], ["episodes", "Episodes", Layers], ["interviews", "Interviews", Users], ["days", "Production Days", Calendar], ["milestones", "Milestones", Sparkles]].map(([k, l, Icon]) => (
+            {[["home", "Home", HomeIcon], ["episodes", "Episodes", Layers], ["interviews", "Interviews", Users], ["days", "Production Days", Calendar], ["milestones", "Recent Progress", Sparkles]].map(([k, l, Icon]) => (
               <button key={k} onClick={() => setProducerTab(k)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 16px", background: producerTab === k ? CREAM_2 : "transparent", border: "none", fontSize: 12.5, textAlign: "left" }}>
                 <Icon size={14} /> {l}
               </button>
