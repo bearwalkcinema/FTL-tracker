@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabaseClient";
 import {
   Film, MapPin, Users, Calendar, CheckCircle2, Circle, Clock,
   ChevronRight, ChevronLeft, X, Plus, Home as HomeIcon, Camera,
-  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil, ChevronDown
+  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil, ChevronDown, Search
 } from "lucide-react";
 
 // ---------- Domain constants ----------
@@ -841,6 +841,31 @@ function AddBar({ label, onClick }) {
   );
 }
 
+function FilterBar({ episodes, filters, setFilters, searchPlaceholder, showEpisode = true }) {
+  const active = filters.episodeId || filters.search || filters.dateFrom || filters.dateTo;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", background: "#fff", border: `1px solid ${LINE}`, borderRadius: 10, padding: 10, marginBottom: 14 }}>
+      <Search size={14} color={MUTE} style={{ flexShrink: 0 }} />
+      <input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} placeholder={searchPlaceholder} style={{ ...inputStyle, width: 180, flex: "1 1 180px" }} />
+      {showEpisode && (
+        <select value={filters.episodeId} onChange={(e) => setFilters({ ...filters, episodeId: e.target.value })} style={{ ...inputStyle, width: "auto" }}>
+          <option value="">All Episodes</option>
+          {episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
+        </select>
+      )}
+      <span style={{ fontSize: 11, color: MUTE }}>From</span>
+      <input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
+      <span style={{ fontSize: 11, color: MUTE }}>To</span>
+      <input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
+      {active && (
+        <button onClick={() => setFilters({ episodeId: "", search: "", dateFrom: "", dateTo: "" })} style={{ fontSize: 11.5, color: CLAY, background: "none", border: "none", textDecoration: "underline", marginLeft: "auto" }}>
+          Clear filters
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Modal({ title, onClose, children }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(36,31,26,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
@@ -938,6 +963,18 @@ function ProducerInterviews({ data, update }) {
     setModal(false); setEditingId(null); setForm(blankForm);
   };
   const del = (id) => update({ ...data, interviews: data.interviews.filter((i) => i.id !== id) });
+  const [filters, setFilters] = useState({ episodeId: "", search: "", dateFrom: "", dateTo: "" });
+  const filteredInterviews = data.interviews.filter((i) => {
+    if (filters.episodeId && i.episodeId !== filters.episodeId) return false;
+    if (filters.dateFrom && (!i.date || i.date < filters.dateFrom)) return false;
+    if (filters.dateTo && (!i.date || i.date > filters.dateTo)) return false;
+    if (filters.search) {
+      const s = filters.search.toLowerCase();
+      const hay = [i.person, i.description, i.location, i.org].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
   const importBulk = () => {
     const rows = parseBulkRows(bulkText);
     let added = 0, skipped = 0;
@@ -966,7 +1003,9 @@ function ProducerInterviews({ data, update }) {
           Import CSV
         </button>
       </div>
-      <DataTable columns={["Person", "Episode", "Type", "Description", "Date"]} rows={data.interviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <span key="d" style={{ color: MUTE, fontSize: 11.5 }}>{(i.description || "—").slice(0, 40)}{(i.description || "").length > 40 ? "…" : ""}</span>, i.date] }))} onDelete={del} onEdit={openEdit} />
+      <FilterBar episodes={data.episodes} filters={filters} setFilters={setFilters} searchPlaceholder="Search person, description, location…" />
+      {filteredInterviews.length !== data.interviews.length && <p style={{ fontSize: 11.5, color: MUTE, marginTop: -8, marginBottom: 10 }}>Showing {filteredInterviews.length} of {data.interviews.length}</p>}
+      <DataTable columns={["Person", "Episode", "Type", "Description", "Date"]} rows={filteredInterviews.map((i) => ({ id: i.id, cells: [i.person, data.episodes.find((e) => e.id === i.episodeId)?.title || "—", i.type, <span key="d" style={{ color: MUTE, fontSize: 11.5 }}>{(i.description || "—").slice(0, 40)}{(i.description || "").length > 40 ? "…" : ""}</span>, i.date] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Import Interviews" onClose={() => setBulkModal(false)}>
           <button type="button" onClick={() => downloadTemplate("interviews-template.csv", ["Person", "Episode", "Type", "Description", "Date", "Location", "Viewing Link", "Transcript Link"], ["Maria Alvarez", "Episode 1", "Primary Voice", "Discussed her early years volunteering", "2026-03-14", "Portland, OR", "", ""])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
@@ -1032,6 +1071,18 @@ function ProducerDays({ data, update }) {
     setModal(false); setEditingId(null); setForm(blankForm);
   };
   const del = (id) => update({ ...data, productionDays: data.productionDays.filter((d) => d.id !== id) });
+  const [filters, setFilters] = useState({ episodeId: "", search: "", dateFrom: "", dateTo: "" });
+  const filteredDays = data.productionDays.filter((d) => {
+    if (filters.episodeId && d.episodeId !== filters.episodeId) return false;
+    if (filters.dateFrom && (!d.date || d.date < filters.dateFrom)) return false;
+    if (filters.dateTo && (!d.date || d.date > filters.dateTo)) return false;
+    if (filters.search) {
+      const s = filters.search.toLowerCase();
+      const hay = [d.city, d.state, d.country, d.location, d.type, d.notes].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
   const importBulk = () => {
     const rows = parseBulkRows(bulkText);
     let added = 0, skipped = 0;
@@ -1057,7 +1108,9 @@ function ProducerDays({ data, update }) {
           Import CSV
         </button>
       </div>
-      <DataTable columns={["Episode", "Date", "City", "Country", "Location"]} rows={data.productionDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location] }))} onDelete={del} onEdit={openEdit} />
+      <FilterBar episodes={data.episodes} filters={filters} setFilters={setFilters} searchPlaceholder="Search city, state, country, location…" />
+      {filteredDays.length !== data.productionDays.length && <p style={{ fontSize: 11.5, color: MUTE, marginTop: -8, marginBottom: 10 }}>Showing {filteredDays.length} of {data.productionDays.length}</p>}
+      <DataTable columns={["Episode", "Date", "City", "Country", "Location"]} rows={filteredDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Import Production Days" onClose={() => setBulkModal(false)}>
           <button type="button" onClick={() => downloadTemplate("production-days-template.csv", ["Episode", "Date", "City", "State", "Country", "Location", "Type"], ["Episode 1", "2026-03-14", "Portland", "OR", "USA", "Community Center", "Interview"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
@@ -1099,23 +1152,40 @@ function ProducerDays({ data, update }) {
 
 function ProducerMilestones({ data, update }) {
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ episodeId: data.episodes[0]?.id, date: "", text: "", kind: "recent" });
-  const save = () => { update({ ...data, milestones: [...data.milestones, { id: uid("ms"), ...form }] }); setModal(false); setForm({ ...form, text: "", date: "" }); };
+  const [editingId, setEditingId] = useState(null);
+  const blankForm = { episodeId: data.episodes[0]?.id, date: "", text: "", kind: "recent" };
+  const [form, setForm] = useState(blankForm);
+  const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
+  const openEdit = (id) => {
+    const m = data.milestones.find((x) => x.id === id);
+    if (!m) return;
+    setEditingId(id);
+    setForm({ ...blankForm, ...m });
+    setModal(true);
+  };
+  const save = () => {
+    if (editingId) {
+      update({ ...data, milestones: data.milestones.map((m) => (m.id === editingId ? { ...m, ...form } : m)) });
+    } else {
+      update({ ...data, milestones: [...data.milestones, { id: uid("ms"), ...form }] });
+    }
+    setModal(false); setEditingId(null); setForm(blankForm);
+  };
   const del = (id) => update({ ...data, milestones: data.milestones.filter((m) => m.id !== id) });
 
   return (
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Recent Progress</h1>
       <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>These need a date to show up on Client View's "Recent Progress" card — anything dated within the last 30 days shows under "Last 30 Days," anything dated within the next 30 days shows under "Next 30 Days." They also feed the Producer Home overview panels.</p>
-      <AddBar label="Add Milestone" onClick={() => setModal(true)} />
-      <DataTable columns={["Episode", "Kind", "Text", "Date"]} rows={data.milestones.map((m) => ({ id: m.id, cells: [data.episodes.find((e) => e.id === m.episodeId)?.title || "Series-wide", m.kind, m.text, m.date] }))} onDelete={del} />
+      <AddBar label="Add Milestone" onClick={openAdd} />
+      <DataTable columns={["Episode", "Kind", "Text", "Date"]} rows={data.milestones.map((m) => ({ id: m.id, cells: [data.episodes.find((e) => e.id === m.episodeId)?.title || "Series-wide", m.kind, m.text, m.date] }))} onDelete={del} onEdit={openEdit} />
       {modal && (
-        <Modal title="Add Milestone" onClose={() => setModal(false)}>
+        <Modal title={editingId ? "Edit Milestone" : "Add Milestone"} onClose={() => { setModal(false); setEditingId(null); }}>
           <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
           <Field label="Kind"><select style={inputStyle} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}><option value="recent">Recent</option><option value="upcoming">Upcoming</option></select></Field>
           <Field label="Text"><textarea style={inputStyle} value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} /></Field>
           <Field label="Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-          <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>Save Milestone</button>
+          <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>{editingId ? "Save Changes" : "Save Milestone"}</button>
         </Modal>
       )}
     </div>
