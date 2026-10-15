@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
 import {
   Film, MapPin, Users, Calendar, CheckCircle2, Circle, Clock,
   ChevronRight, ChevronLeft, X, Plus, Home as HomeIcon, Camera,
-  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil, ChevronDown, Search
+  PlayCircle, FileText, AlertCircle, Compass, Layers, Video, Sparkles, HardDrive, Sun, Moon, Pencil, ChevronDown, Search, CalendarDays
 } from "lucide-react";
 
 // ---------- Domain constants ----------
@@ -85,6 +85,7 @@ function initialData() {
     interviews: [],
     productionDays: [],
     milestones: [],
+    events: [],
   };
 }
 
@@ -208,6 +209,36 @@ function StatBlock({ value, label, icon: Icon }) {
   );
 }
 
+const EVENT_TYPES = ["Shoot", "Travel", "Interview", "Review", "Delivery", "Meeting", "Other"];
+const EVENT_STATUSES = ["Confirmed", "Tentative", "Cancelled"];
+const EVENT_STATUS_COLOR = { Confirmed: SAGE, Tentative: GOLD, Cancelled: MUTE };
+const pad2 = (n) => String(n).padStart(2, "0");
+const toISO = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
+const eventCoversDay = (ev, iso) => !!ev.date && iso >= ev.date && iso <= (ev.endDate && ev.endDate >= ev.date ? ev.endDate : ev.date);
+const fmtShort = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+const fmtEventDates = (ev) => (ev.endDate && ev.endDate > ev.date ? `${fmtShort(ev.date)} – ${fmtShort(ev.endDate)}` : fmtShort(ev.date));
+const normalizeDate = (str) => {
+  if (!str) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+  const d = new Date(str);
+  return isNaN(d) ? "" : toISO(d.getFullYear(), d.getMonth(), d.getDate());
+};
+function readableOn(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return "#fff";
+  const n = parseInt(m[1], 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.62 ? "#241F1A" : "#fff";
+}
+function EventStatusPill({ status }) {
+  const c = EVENT_STATUS_COLOR[status] || MUTE;
+  return (
+    <span className="mono" style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: c + "22", color: c, border: `1px ${status === "Tentative" ? "dashed" : "solid"} ${c}88`, whiteSpace: "nowrap", textDecoration: status === "Cancelled" ? "line-through" : "none" }}>
+      {status}
+    </span>
+  );
+}
+
 function StatusPill({ status }) {
   return (
     <span className="mono" style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: STATUS_COLOR[status] + "22", color: STATUS_COLOR[status], border: `1px solid ${STATUS_COLOR[status]}55`, whiteSpace: "nowrap" }}>
@@ -295,6 +326,139 @@ function EpisodeDataTable({ data, openEpisode }) {
 }
 
 // ---------- Client-facing views ----------
+function EventChip({ ev, episodes, onClick }) {
+  const epObj = episodes.find((e) => e.id === ev.episodeId);
+  const color = (epObj && epObj.accentColor) || GOLD;
+  const base = { display: "block", width: "100%", textAlign: "left", fontSize: 10.5, lineHeight: 1.25, padding: "2px 5px", borderRadius: 5, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer", fontFamily: "inherit" };
+  let style;
+  if (ev.status === "Cancelled") style = { ...base, background: "transparent", border: "1px solid var(--line, #E3DBC9)", color: "var(--mute, #8A8272)", textDecoration: "line-through" };
+  else if (ev.status === "Tentative") style = { ...base, background: color + "22", border: `1.5px dashed ${color}`, color: "var(--ink, #241F1A)" };
+  else style = { ...base, background: color, border: `1.5px solid ${color}`, color: readableOn(color) };
+  return <button onClick={onClick} style={style} title={`${ev.title} — ${ev.status}`}>{ev.status === "Tentative" ? "? " : ""}{ev.title}</button>;
+}
+
+function ClientCalendar({ data }) {
+  const episodes = data.episodes;
+  const allEvents = (data.events || []).filter((e) => e.clientVisible !== false && e.date);
+  const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [view, setView] = useState("month");
+  const [episodeFilter, setEpisodeFilter] = useState("");
+  const [hideCancelled, setHideCancelled] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(null);
+  useEffect(() => { if (typeof window !== "undefined" && window.innerWidth < 640) setView("list"); }, []);
+
+  const events = allEvents.filter((e) => (!episodeFilter || e.episodeId === episodeFilter) && !(hideCancelled && e.status === "Cancelled"));
+  const year = cursor.getFullYear(), month = cursor.getMonth();
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const now = new Date();
+  const todayISO = toISO(now.getFullYear(), now.getMonth(), now.getDate());
+  const monthStart = toISO(year, month, 1), monthEnd = toISO(year, month, daysInMonth);
+  const monthEvents = events.filter((e) => e.date <= monthEnd && (e.endDate && e.endDate >= e.date ? e.endDate : e.date) >= monthStart).sort((a, b) => a.date.localeCompare(b.date));
+  const dayEvents = selectedDay ? events.filter((e) => eventCoversDay(e, selectedDay)) : [];
+  const monthLabel = cursor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const go = (delta) => { setCursor(new Date(year, month + delta, 1)); setSelectedDay(null); };
+
+  const EventRow = ({ ev }) => {
+    const epObj = episodes.find((e) => e.id === ev.episodeId);
+    const color = (epObj && epObj.accentColor) || GOLD;
+    return (
+      <div style={{ display: "flex", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--line, #E3DBC9)", opacity: ev.status === "Cancelled" ? 0.65 : 1 }}>
+        <span style={{ width: 4, borderRadius: 4, background: color, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, fontSize: 14, textDecoration: ev.status === "Cancelled" ? "line-through" : "none" }}>{ev.title}</span>
+            <EventStatusPill status={ev.status} />
+          </div>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--mute, #8A8272)", marginTop: 3 }}>
+            {fmtEventDates(ev)} · {ev.type}{epObj ? " · " + epObj.title : " · Series-wide"}{ev.location ? " · " + ev.location : ""}
+          </div>
+          {ev.notes && <div style={{ fontSize: 12.5, marginTop: 5 }}>{ev.notes}</div>}
+        </div>
+      </div>
+    );
+  };
+
+  const navBtn = { background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 8, padding: "5px 9px", color: "var(--ink, #241F1A)", display: "flex", alignItems: "center" };
+  const selectStyle = { fontSize: 12, padding: "5px 8px", borderRadius: 8, border: "1px solid var(--line, #E3DBC9)", background: "var(--surface, #fff)", color: "var(--ink, #241F1A)" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => go(-1)} style={navBtn} aria-label="Previous month"><ChevronLeft size={15} /></button>
+          <span className="serif" style={{ fontSize: 18, fontWeight: 600, minWidth: 150, textAlign: "center" }}>{monthLabel}</span>
+          <button onClick={() => go(1)} style={navBtn} aria-label="Next month"><ChevronRight size={15} /></button>
+          <button onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); setSelectedDay(null); }} style={{ ...navBtn, fontSize: 11.5 }}>Today</button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          <select value={episodeFilter} onChange={(e) => setEpisodeFilter(e.target.value)} style={selectStyle}>
+            <option value="">All Episodes</option>
+            {episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
+          </select>
+          <label style={{ fontSize: 11.5, color: "var(--mute, #8A8272)", display: "flex", alignItems: "center", gap: 5 }}>
+            <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} /> Hide cancelled
+          </label>
+          <div style={{ display: "flex", gap: 3, background: "var(--bg2, #F1EBDD)", borderRadius: 8, padding: 3 }}>
+            {["month", "list"].map((v) => (
+              <button key={v} onClick={() => setView(v)} style={{ padding: "4px 11px", borderRadius: 6, border: "none", fontSize: 11.5, background: view === v ? "var(--ink, #241F1A)" : "transparent", color: view === v ? "var(--bg, #F8F4EC)" : "var(--mute, #8A8272)" }}>
+                {v === "month" ? "Month" : "List"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mono" style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 10, color: "var(--mute, #8A8272)", marginBottom: 12 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 22, height: 10, borderRadius: 3, background: GOLD }} />Confirmed</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 22, height: 10, borderRadius: 3, background: GOLD + "22", border: `1.5px dashed ${GOLD}` }} />Tentative</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ textDecoration: "line-through" }}>Cancelled</span></span>
+        <span>Colors match each episode</span>
+      </div>
+
+      {view === "month" ? (
+        <div style={{ overflowX: "auto" }}>
+          <div style={{ minWidth: 560, border: "1px solid var(--line, #E3DBC9)", borderRadius: 12, overflow: "hidden", background: "var(--surface, #fff)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "var(--bg2, #F1EBDD)" }}>
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => <div key={d} className="mono" style={{ fontSize: 10, color: "var(--mute, #8A8272)", padding: "7px 8px", textTransform: "uppercase" }}>{d}</div>)}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
+              {cells.map((d, idx) => {
+                const iso = d ? toISO(year, month, d) : null;
+                const evs = iso ? events.filter((e) => eventCoversDay(e, iso)) : [];
+                const isToday = iso === todayISO;
+                return (
+                  <div key={idx} onClick={() => iso && setSelectedDay(iso === selectedDay ? null : iso)} style={{ minHeight: 92, padding: 6, borderTop: "1px solid var(--line, #E3DBC9)", borderLeft: idx % 7 ? "1px solid var(--line, #E3DBC9)" : "none", background: iso === selectedDay ? "var(--bg2, #F1EBDD)" : "transparent", cursor: iso ? "pointer" : "default" }}>
+                    {d && <div className="mono" style={{ fontSize: 10.5, marginBottom: 4, color: isToday ? "#fff" : "var(--mute, #8A8272)", background: isToday ? GOLD : "transparent", display: "inline-block", minWidth: 18, textAlign: "center", borderRadius: 9, padding: isToday ? "1px 4px" : 0 }}>{d}</div>}
+                    {evs.slice(0, 3).map((ev) => <EventChip key={ev.id} ev={ev} episodes={episodes} onClick={(e) => { e.stopPropagation(); setSelectedDay(iso); }} />)}
+                    {evs.length > 3 && <div className="mono" style={{ fontSize: 9.5, color: "var(--mute, #8A8272)" }}>+{evs.length - 3} more</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div>
+          {monthEvents.length === 0 && <p style={{ color: "var(--mute, #8A8272)", fontSize: 13 }}>Nothing on the calendar this month.</p>}
+          {monthEvents.map((ev) => <EventRow key={ev.id} ev={ev} />)}
+        </div>
+      )}
+
+      {view === "month" && selectedDay && (
+        <div style={{ marginTop: 14, padding: "6px 18px 0", background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 12 }}>
+          <div className="mono" style={{ fontSize: 11, color: "var(--mute, #8A8272)", textTransform: "uppercase", padding: "10px 0 0" }}>{new Date(selectedDay + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</div>
+          {dayEvents.length === 0 ? <p style={{ color: "var(--mute, #8A8272)", fontSize: 13, padding: "8px 0 12px", margin: 0 }}>Nothing scheduled.</p> : dayEvents.map((ev) => <EventRow key={ev.id} ev={ev} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ClientOverview({ data, openEpisode }) {
   const [mode, setMode] = useState("overview");
   const [progressOpen, setProgressOpen] = useState(false);
@@ -324,6 +488,12 @@ function ClientOverview({ data, openEpisode }) {
   const parseDate = (s) => { if (!s) return null; const d = new Date(s + "T00:00:00"); return isNaN(d) ? null : d; };
   const last30 = data.milestones.filter((m) => { const d = parseDate(m.date); return d && (today - d) >= 0 && (today - d) <= 30 * msDay; }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const next30 = data.milestones.filter((m) => { const d = parseDate(m.date); return d && (d - today) > 0 && (d - today) <= 30 * msDay; }).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
+  const comingUp = (data.events || [])
+    .filter((e) => e.clientVisible !== false && e.date && e.status !== "Cancelled" && (e.endDate && e.endDate >= e.date ? e.endDate : e.date) >= todayISO)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 3);
+  const jumpToCalendar = () => { const el = document.getElementById("calendar-section"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); };
 
   return (
     <div>
@@ -355,6 +525,39 @@ function ClientOverview({ data, openEpisode }) {
           </div>
         </div>
       </div>
+
+      {/* Coming up */}
+      {comingUp.length > 0 && (
+        <div style={{ padding: "20px 40px 0" }}>
+          <div style={{ background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 14, padding: "14px 18px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: GOLD }}>
+                <CalendarDays size={15} /><span className="mono" style={{ fontSize: 10.5, textTransform: "uppercase" }}>Coming up</span>
+              </div>
+              <button onClick={jumpToCalendar} style={{ fontSize: 12, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0 }}>See full calendar</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
+              {comingUp.map((ev) => {
+                const epObj = data.episodes.find((e) => e.id === ev.episodeId);
+                const color = (epObj && epObj.accentColor) || GOLD;
+                return (
+                  <div key={ev.id} style={{ display: "flex", gap: 10 }}>
+                    <span style={{ width: 4, borderRadius: 4, background: color, flexShrink: 0 }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div className="mono" style={{ fontSize: 10.5, color: "var(--mute, #8A8272)" }}>{fmtEventDates(ev)}</div>
+                      <div style={{ fontWeight: 600, fontSize: 14, margin: "2px 0 5px" }}>{ev.title}</div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <EventStatusPill status={ev.status} />
+                        <span style={{ fontSize: 11.5, color: "var(--mute, #8A8272)" }}>{epObj ? epObj.title : "Series-wide"}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Series stats */}
       <div style={{ padding: "28px 40px", display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -445,6 +648,14 @@ function ClientOverview({ data, openEpisode }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Calendar */}
+      {(data.events || []).some((e) => e.clientVisible !== false && e.date) && (
+        <div id="calendar-section" style={{ padding: "0 40px 40px", scrollMarginTop: 16 }}>
+          <h2 className="serif" style={{ fontSize: 22, marginBottom: 16 }}>Calendar</h2>
+          <ClientCalendar data={data} />
         </div>
       )}
 
@@ -682,6 +893,7 @@ function ProducerHome({ data, setTab, update }) {
           ["interviews", "Add Interview", Users],
           ["days", "Add Production Day", Calendar],
           ["milestones", "Add Milestone", Sparkles],
+          ["calendar", "Add Calendar Event", CalendarDays],
         ].map(([key, label, Icon]) => (
           <button key={key} onClick={() => setTab(key)} style={{ display: "flex", alignItems: "center", gap: 8, background: INK, color: CREAM, border: "none", borderRadius: 10, padding: "10px 16px", fontSize: 13 }}>
             <Icon size={15} /> {label}
@@ -841,8 +1053,8 @@ function AddBar({ label, onClick }) {
   );
 }
 
-function FilterBar({ episodes, filters, setFilters, searchPlaceholder, showEpisode = true }) {
-  const active = filters.episodeId || filters.search || filters.dateFrom || filters.dateTo;
+function FilterBar({ episodes, filters, setFilters, searchPlaceholder, showEpisode = true, statusOptions }) {
+  const active = filters.episodeId || filters.search || filters.dateFrom || filters.dateTo || filters.status;
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", background: "#fff", border: `1px solid ${LINE}`, borderRadius: 10, padding: 10, marginBottom: 14 }}>
       <Search size={14} color={MUTE} style={{ flexShrink: 0 }} />
@@ -853,12 +1065,18 @@ function FilterBar({ episodes, filters, setFilters, searchPlaceholder, showEpiso
           {episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}
         </select>
       )}
+      {statusOptions && (
+        <select value={filters.status || ""} onChange={(e) => setFilters({ ...filters, status: e.target.value })} style={{ ...inputStyle, width: "auto" }}>
+          <option value="">All Statuses</option>
+          {statusOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      )}
       <span style={{ fontSize: 11, color: MUTE }}>From</span>
       <input type="date" value={filters.dateFrom} onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
       <span style={{ fontSize: 11, color: MUTE }}>To</span>
       <input type="date" value={filters.dateTo} onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
       {active && (
-        <button onClick={() => setFilters({ episodeId: "", search: "", dateFrom: "", dateTo: "" })} style={{ fontSize: 11.5, color: CLAY, background: "none", border: "none", textDecoration: "underline", marginLeft: "auto" }}>
+        <button onClick={() => setFilters({ episodeId: "", search: "", dateFrom: "", dateTo: "", status: "" })} style={{ fontSize: 11.5, color: CLAY, background: "none", border: "none", textDecoration: "underline", marginLeft: "auto" }}>
           Clear filters
         </button>
       )}
@@ -1193,6 +1411,131 @@ function ProducerMilestones({ data, update }) {
 }
 
 // ---------- App shell ----------
+function ProducerCalendar({ data, update }) {
+  const events = data.events || [];
+  const [modal, setModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [bulkModal, setBulkModal] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkResult, setBulkResult] = useState(null);
+  const [filters, setFilters] = useState({ episodeId: "", search: "", dateFrom: "", dateTo: "", status: "" });
+  const blankForm = { title: "", episodeId: "", type: "Shoot", status: "Confirmed", date: "", endDate: "", location: "", notes: "", clientVisible: true };
+  const [form, setForm] = useState(blankForm);
+  const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
+  const openEdit = (id) => {
+    const ev = events.find((x) => x.id === id);
+    if (!ev) return;
+    setEditingId(id);
+    setForm({ ...blankForm, ...ev });
+    setModal(true);
+  };
+  const save = () => {
+    const clean = { ...form, endDate: form.endDate && form.endDate >= form.date ? form.endDate : "" };
+    if (editingId) update({ ...data, events: events.map((x) => (x.id === editingId ? { ...x, ...clean } : x)) });
+    else update({ ...data, events: [...events, { id: uid("ev"), ...clean }] });
+    setModal(false); setEditingId(null); setForm(blankForm);
+  };
+  const del = (id) => update({ ...data, events: events.filter((x) => x.id !== id) });
+  const setStatus = (id, status) => update({ ...data, events: events.map((x) => (x.id === id ? { ...x, status } : x)) });
+
+  const filtered = events.filter((ev) => {
+    if (filters.episodeId && ev.episodeId !== filters.episodeId) return false;
+    if (filters.status && ev.status !== filters.status) return false;
+    if (filters.dateFrom && (!ev.date || (ev.endDate || ev.date) < filters.dateFrom)) return false;
+    if (filters.dateTo && (!ev.date || ev.date > filters.dateTo)) return false;
+    if (filters.search) {
+      const hay = [ev.title, ev.location, ev.notes, ev.type].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(filters.search.toLowerCase())) return false;
+    }
+    return true;
+  }).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  const importBulk = () => {
+    const rows = parseBulkRows(bulkText);
+    let added = 0, skipped = 0;
+    const fresh = [];
+    rows.forEach((cols) => {
+      if (/^title$/i.test(cols[0] || "")) return; // header row
+      const title = cols[0];
+      const date = normalizeDate(cols[4]);
+      let episodeId = "";
+      if (cols[1]) { episodeId = matchEpisode(data, cols[1]); if (!episodeId) { skipped++; return; } }
+      if (!title || !date) { skipped++; return; }
+      const type = EVENT_TYPES.find((t) => t.toLowerCase() === (cols[2] || "").toLowerCase()) || "Other";
+      const status = EVENT_STATUSES.find((t) => t.toLowerCase() === (cols[3] || "").toLowerCase()) || "Tentative";
+      const endRaw = normalizeDate(cols[5]);
+      fresh.push({ id: uid("ev"), title, episodeId, type, status, date, endDate: endRaw && endRaw >= date ? endRaw : "", location: cols[6] || "", notes: cols[7] || "", clientVisible: true });
+      added++;
+    });
+    update({ ...data, events: [...events, ...fresh] });
+    setBulkResult({ added, skipped });
+    setBulkText("");
+  };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Calendar</h1>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event is Confirmed, Tentative or Cancelled — that's shown to clients as solid, dashed, or struck-through on the Calendar section of Client View. Untick "Show on client calendar" for anything internal.</p>
+      <div style={{ display: "flex", gap: 10 }}>
+        <AddBar label="Add Event" onClick={openAdd} />
+        <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>Import CSV</button>
+      </div>
+      <FilterBar episodes={data.episodes} filters={filters} setFilters={setFilters} searchPlaceholder="Search title, location, notes…" statusOptions={EVENT_STATUSES} />
+      {filtered.length !== events.length && <p style={{ fontSize: 11.5, color: MUTE, marginTop: -8, marginBottom: 10 }}>Showing {filtered.length} of {events.length}</p>}
+      <DataTable
+        columns={["Date", "Event", "Episode", "Type", "Status"]}
+        rows={filtered.map((ev) => ({
+          id: ev.id,
+          cells: [
+            fmtEventDates(ev),
+            <span key="t" style={{ textDecoration: ev.status === "Cancelled" ? "line-through" : "none", color: ev.status === "Cancelled" ? MUTE : INK }}>{ev.title}{ev.clientVisible === false ? " (internal)" : ""}</span>,
+            data.episodes.find((e) => e.id === ev.episodeId)?.title || "Series-wide",
+            ev.type,
+            <select key="s" value={ev.status} onChange={(e) => setStatus(ev.id, e.target.value)} style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${EVENT_STATUS_COLOR[ev.status] || LINE}`, color: EVENT_STATUS_COLOR[ev.status] || INK, background: "#fff" }}>
+              {EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}
+            </select>,
+          ],
+        }))}
+        onDelete={del}
+        onEdit={openEdit}
+      />
+
+      {modal && (
+        <Modal title={editingId ? "Edit Event" : "Add Event"} onClose={() => { setModal(false); setEditingId(null); }}>
+          <Field label="Title"><input style={inputStyle} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="e.g. Uganda shoot" /></Field>
+          <Field label="Status"><select style={inputStyle} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}</select></Field>
+          <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}><option value="">Series-wide</option>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
+          <Field label="Type"><select style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>{EVENT_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field>
+          <Field label="Start Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+          <Field label="End Date (optional, for multi-day)"><input type="date" style={inputStyle} value={form.endDate} min={form.date || undefined} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></Field>
+          <Field label="Location"><input style={inputStyle} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
+          <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 60 }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 6 }}>
+            <input type="checkbox" checked={form.clientVisible !== false} onChange={(e) => setForm({ ...form, clientVisible: e.target.checked })} /> Show on client calendar
+          </label>
+          <button onClick={save} disabled={!form.title || !form.date} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6, opacity: form.title && form.date ? 1 : 0.5 }}>{editingId ? "Save Changes" : "Save Event"}</button>
+        </Modal>
+      )}
+
+      {bulkModal && (
+        <Modal title="Import Calendar Events" onClose={() => setBulkModal(false)}>
+          <button type="button" onClick={() => downloadTemplate("calendar-template.csv", ["Title", "Episode", "Type", "Status", "Start Date", "End Date", "Location", "Notes"], ["Uganda shoot", "Episode 6", "Shoot", "Tentative", "2026-09-14", "2026-09-20", "Kampala, Uganda", "Dates pending travel confirmation"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>Download a blank CSV template</button>
+          <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>Title, Episode (title/number, blank = series-wide), Type, Status (Confirmed/Tentative/Cancelled), Start Date, End Date, Location, Notes</p>
+          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Title and Start Date are required. Rows with no status import as Tentative, so nothing shows as confirmed by accident.</p>
+          <FileImportInput onText={setBulkText} />
+          <details style={{ marginBottom: 10 }}>
+            <summary style={{ fontSize: 11.5, color: MUTE, cursor: "pointer" }}>Or paste rows directly instead</summary>
+            <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} style={{ ...inputStyle, minHeight: 100, fontFamily: "monospace", fontSize: 12, marginTop: 8 }} />
+          </details>
+          {bulkText && <p style={{ fontSize: 11.5, color: MUTE, margin: "0 0 8px" }}>{parseBulkRows(bulkText).length} row(s) ready to import.</p>}
+          {bulkResult && <p style={{ fontSize: 12, color: bulkResult.skipped ? CLAY : SAGE, margin: "8px 0 0" }}>Imported {bulkResult.added}. {bulkResult.skipped > 0 && `${bulkResult.skipped} skipped (missing title/date or unmatched episode).`}</p>}
+          <button onClick={importBulk} disabled={!bulkText} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 10, opacity: bulkText ? 1 : 0.5 }}>Import Rows</button>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1229,7 +1572,17 @@ export default function App() {
   const [clientEpisode, setClientEpisode] = useState(null);
   const [producerTab, setProducerTab] = useState("home");
   const [producerEpSel, setProducerEpSel] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const dataRef = useRef(null);
+  const dirtyRef = useRef(false);
+  const savingRef = useRef(false);
+  const timerRef = useRef(null);
+  const errRef = useRef("");
+  const clientIdRef = useRef(Math.random().toString(36).slice(2));
+  const [saveState, setSaveState] = useState("saved");
+  const [lastSaved, setLastSaved] = useState(null);
+  const [saveError, setSaveError] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [verifyMsg, setVerifyMsg] = useState("");
 
   useEffect(() => {
     let channel;
@@ -1252,14 +1605,20 @@ export default function App() {
           director: "", activePhases: idx === 0 ? ["Production", "Post-Production"] : [], accentColor: CHAMPION_ACCENTS[idx] || "", coverImageUrl: "", dataSizeTB: "", hoursFootage: "", ...e,
           editor: e.editor || "Daniel Latimer",
         }));
+        dataRef.current = loaded;
         setData(loaded);
-      } catch (e) { console.error(e); setData(initialData()); }
+      } catch (e) { console.error(e); const fresh = initialData(); dataRef.current = fresh; setData(fresh); }
     })();
 
     channel = supabase
       .channel("tracker_data_changes")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tracker_data", filter: "id=eq.main" }, (payload) => {
-        if (payload.new && payload.new.data) setData(payload.new.data);
+        const incoming = payload.new && payload.new.data;
+        if (!incoming) return;
+        if (incoming._meta && incoming._meta.by === clientIdRef.current) return;
+        if (dirtyRef.current || savingRef.current) return;
+        dataRef.current = incoming;
+        setData(incoming);
       })
       .subscribe();
 
@@ -1272,13 +1631,86 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  const update = async (next) => {
-    setData(next);
-    setSaving(true);
-    try { await supabase.from("tracker_data").upsert({ id: "main", data: next, updated_at: new Date().toISOString() }); }
-    catch (e) { console.error(e); }
-    setSaving(false);
+  const flush = async () => {
+    clearTimeout(timerRef.current);
+    if (savingRef.current || !dirtyRef.current) return;
+    savingRef.current = true;
+    dirtyRef.current = false;
+    setSaveState("saving");
+    const snapshot = { ...dataRef.current, _meta: { by: clientIdRef.current, at: new Date().toISOString() } };
+    let err = null;
+    try {
+      const res = await supabase.from("tracker_data").upsert({ id: "main", data: snapshot, updated_at: new Date().toISOString() });
+      err = res.error;
+    } catch (e) { err = e; }
+    savingRef.current = false;
+    if (err) {
+      dirtyRef.current = true;
+      errRef.current = err.message || "Couldn't reach the database.";
+      setSaveError(errRef.current);
+      setSaveState("error");
+      return;
+    }
+    errRef.current = "";
+    if (dirtyRef.current) { flush(); return; }
+    setSaveError("");
+    setLastSaved(new Date());
+    setSaveState("saved");
   };
+
+  const update = (next) => {
+    dataRef.current = next;
+    setData(next);
+    dirtyRef.current = true;
+    setSaveState((st) => (st === "saving" ? st : "dirty"));
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(flush, 700);
+  };
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const stripMeta = (o) => { if (!o || typeof o !== "object") return o; const { _meta, ...rest } = o; return rest; };
+  const deepEqual = (a, b) => {
+    if (a === b) return true;
+    if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && deepEqual(a[k], b[k]));
+  };
+
+  const saveNow = async () => {
+    setVerifying(true);
+    setVerifyMsg("");
+    dirtyRef.current = true;
+    await flush();
+    for (let i = 0; i < 200 && (savingRef.current || dirtyRef.current) && !errRef.current; i++) {
+      if (!savingRef.current && dirtyRef.current) flush();
+      await sleep(150);
+    }
+    if (errRef.current) { setVerifying(false); return; }
+    let msg;
+    try {
+      const { data: row, error } = await supabase.from("tracker_data").select("data").eq("id", "main").single();
+      if (error || !row) msg = "Saved, but couldn't double-check the database.";
+      else if (deepEqual(JSON.parse(JSON.stringify(stripMeta(dataRef.current))), stripMeta(row.data))) msg = "Verified: everything on this screen is saved to the database.";
+      else msg = "Saved, but the database differs from this screen. Someone else may have saved at the same moment. Reload to see the latest.";
+    } catch (e) { msg = "Saved, but couldn't double-check the database."; }
+    setVerifying(false);
+    setVerifyMsg(msg);
+    setTimeout(() => setVerifyMsg(""), 7000);
+  };
+
+  useEffect(() => {
+    const onBeforeUnload = (e) => { if (dirtyRef.current || savingRef.current) { e.preventDefault(); e.returnValue = ""; } };
+    const onVis = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { window.removeEventListener("beforeunload", onBeforeUnload); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+
+  const statusColor = saveState === "error" ? "#E8826B" : saveState === "saved" ? "#9DB08C" : "#E3AF1B";
+  const statusText = saveState === "error" ? "Not saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : lastSaved ? "Saved " + lastSaved.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Saved";
+  const authHint = /row-level security|jwt|permission|not authorized|401|403/i.test(saveError) ? " You may have been signed out. Open Producer Backend, sign in again, then try again." : "";
 
   if (!data) return <div className="ftlo" style={{ padding: 40, color: MUTE }}>Loading tracker…</div>;
 
@@ -1295,7 +1727,7 @@ export default function App() {
         </div>
         <div className="view-switch" style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.08)", borderRadius: 8, padding: 3 }}>
           {["client", "producer"].map((v) => (
-            <button key={v} onClick={() => setView(v)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, background: view === v ? GOLD : "transparent", color: view === v ? "#fff" : CREAM }}>
+            <button key={v} onClick={() => { flush(); setView(v); }} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, background: view === v ? GOLD : "transparent", color: view === v ? "#fff" : CREAM }}>
               {v === "client" ? "Client View" : "Producer Backend"}
             </button>
           ))}
@@ -1306,9 +1738,29 @@ export default function App() {
               {clientDark ? <Sun size={13} /> : <Moon size={13} />}
             </button>
           )}
-          <span className="mono topbar-label" style={{ fontSize: 10, opacity: 0.5 }}>{saving ? "saving…" : "synced"}</span>
+          {(view === "producer" || saveState !== "saved") && (
+            <span className="mono" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, color: statusColor }}>
+              <span style={{ width: 7, height: 7, borderRadius: 7, background: statusColor, flexShrink: 0 }} />
+              <span className="topbar-label">{statusText}</span>
+            </span>
+          )}
+          {view === "producer" && (
+            <button onClick={saveNow} disabled={verifying} style={{ background: saveState === "saved" ? "rgba(255,255,255,0.08)" : GOLD, color: "#fff", border: "none", borderRadius: 20, padding: "5px 13px", fontSize: 11.5, opacity: verifying ? 0.6 : 1 }}>
+              {verifying ? "Saving…" : "Save now"}
+            </button>
+          )}
         </div>
       </div>
+
+      {saveState === "error" && (
+        <div style={{ background: "#7A2E1D", color: "#fff", padding: "9px 20px", fontSize: 12.5, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>Your latest changes aren't saved yet.{authHint}{saveError ? " (" + saveError + ")" : ""}</span>
+          <button onClick={saveNow} style={{ background: "#fff", color: "#7A2E1D", border: "none", borderRadius: 16, padding: "4px 12px", fontSize: 12 }}>Try again</button>
+        </div>
+      )}
+      {verifyMsg && (
+        <div style={{ background: verifyMsg.startsWith("Verified") ? "#2F4A2A" : "#6B4F12", color: "#fff", padding: "9px 20px", fontSize: 12.5 }}>{verifyMsg}</div>
+      )}
 
       {view === "client" ? (
         <div className={`container${clientDark ? " dark" : ""}`}>
@@ -1321,7 +1773,7 @@ export default function App() {
       ) : (
         <div className="producer-shell">
           <div className="producer-sidebar" style={{ background: "#fff", borderRight: `1px solid ${LINE}`, paddingTop: 10, display: "flex", flexDirection: "column" }}>
-            {[["home", "Home", HomeIcon], ["episodes", "Episodes", Layers], ["interviews", "Interviews", Users], ["days", "Production Days", Calendar], ["milestones", "Recent Progress", Sparkles]].map(([k, l, Icon]) => (
+            {[["home", "Home", HomeIcon], ["episodes", "Episodes", Layers], ["interviews", "Interviews", Users], ["days", "Production Days", Calendar], ["milestones", "Recent Progress", Sparkles], ["calendar", "Calendar", CalendarDays]].map(([k, l, Icon]) => (
               <button key={k} onClick={() => setProducerTab(k)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 16px", background: producerTab === k ? CREAM_2 : "transparent", border: "none", fontSize: 12.5, textAlign: "left" }}>
                 <Icon size={14} /> {l}
               </button>
@@ -1337,6 +1789,7 @@ export default function App() {
             {producerTab === "interviews" && <ProducerInterviews data={data} update={update} />}
             {producerTab === "days" && <ProducerDays data={data} update={update} />}
             {producerTab === "milestones" && <ProducerMilestones data={data} update={update} />}
+            {producerTab === "calendar" && <ProducerCalendar data={data} update={update} />}
           </div>
         </div>
       )}
