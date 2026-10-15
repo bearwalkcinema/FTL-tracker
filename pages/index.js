@@ -210,8 +210,8 @@ function StatBlock({ value, label, icon: Icon }) {
 }
 
 const EVENT_TYPES = ["Shoot", "Travel", "Interview", "Review", "Delivery", "Meeting", "Other"];
-const EVENT_STATUSES = ["Confirmed", "Tentative", "Cancelled"];
-const EVENT_STATUS_COLOR = { Confirmed: SAGE, Tentative: GOLD, Cancelled: MUTE };
+const EVENT_STATUSES = ["Complete", "Confirmed", "Tentative", "Postponed", "Cancelled"];
+const EVENT_STATUS_COLOR = { Complete: "#5E9B6E", Confirmed: "#4A93A8", Tentative: GOLD, Postponed: "#D0714F", Cancelled: MUTE };
 const pad2 = (n) => String(n).padStart(2, "0");
 const toISO = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
 const eventCoversDay = (ev, iso) => !!ev.date && iso >= ev.date && iso <= (ev.endDate && ev.endDate >= ev.date ? ev.endDate : ev.date);
@@ -219,10 +219,40 @@ const fmtShort = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:0
 const fmtEventDates = (ev) => (ev.endDate && ev.endDate > ev.date ? `${fmtShort(ev.date)} – ${fmtShort(ev.endDate)}` : fmtShort(ev.date));
 const normalizeDate = (str) => {
   if (!str) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-  const d = new Date(str);
+  const t = String(str).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(t);
+  if (us) {
+    const mo = Number(us[1]), da = Number(us[2]);
+    const yr = us[3].length === 2 ? 2000 + Number(us[3]) : Number(us[3]);
+    return mo >= 1 && mo <= 12 && da >= 1 && da <= 31 ? toISO(yr, mo - 1, da) : "";
+  }
+  const d = new Date(t);
   return isNaN(d) ? "" : toISO(d.getFullYear(), d.getMonth(), d.getDate());
 };
+const doneDays = (data) => (data.productionDays || []).filter((d) => !d.status || d.status === "Complete");
+const upcomingDays = (data) => (data.productionDays || []).filter((d) => d.status === "Confirmed");
+function calendarEvents(data) {
+  const manual = (data.events || []).filter((e) => e.date);
+  const seen = new Set();
+  const auto = [];
+  (data.productionDays || []).forEach((d) => {
+    const date = normalizeDate(d.date);
+    if (!date) return;
+    const name = d.location || "";
+    const region = [d.city, d.state, d.country].filter(Boolean).join(", ");
+    const key = [d.episodeId, date, name, region, d.status || "Complete"].join("|");
+    if (seen.has(key)) return;
+    seen.add(key);
+    auto.push({
+      id: "pd-" + d.id,
+      title: (d.type || "Production day") + (name ? " — " + name : d.city ? " — " + d.city : ""),
+      date, endDate: "", type: "Shoot", status: d.status || "Complete",
+      episodeId: d.episodeId || "", location: region, notes: "", clientVisible: true, auto: true,
+    });
+  });
+  return [...manual, ...auto];
+}
 function readableOn(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
   if (!m) return "#fff";
@@ -233,7 +263,7 @@ function readableOn(hex) {
 function EventStatusPill({ status }) {
   const c = EVENT_STATUS_COLOR[status] || MUTE;
   return (
-    <span className="mono" style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: c + "22", color: c, border: `1px ${status === "Tentative" ? "dashed" : "solid"} ${c}88`, whiteSpace: "nowrap", textDecoration: status === "Cancelled" ? "line-through" : "none" }}>
+    <span className="mono" style={{ fontSize: 10, padding: "3px 8px", borderRadius: 20, background: c + "22", color: c, border: `1px ${status === "Tentative" ? "dashed" : status === "Postponed" ? "dotted" : "solid"} ${c}88`, whiteSpace: "nowrap", textDecoration: status === "Cancelled" ? "line-through" : "none" }}>
       {status}
     </span>
   );
@@ -248,7 +278,7 @@ function StatusPill({ status }) {
 }
 
 function episodeStats(ep, data) {
-  const days = data.productionDays.filter((d) => d.episodeId === ep.id);
+  const days = doneDays(data).filter((d) => d.episodeId === ep.id);
   return {
     interviews: data.interviews.filter((i) => i.episodeId === ep.id).length,
     supp: data.interviews.filter((i) => i.episodeId === ep.id && i.type === "Supplementary Voice").length,
@@ -333,21 +363,24 @@ function EventChip({ ev, episodes, onClick }) {
   let style;
   if (ev.status === "Cancelled") style = { ...base, background: "transparent", border: "1px solid var(--line, #E3DBC9)", color: "var(--mute, #8A8272)", textDecoration: "line-through" };
   else if (ev.status === "Tentative") style = { ...base, background: color + "22", border: `1.5px dashed ${color}`, color: "var(--ink, #241F1A)" };
+  else if (ev.status === "Postponed") style = { ...base, background: "transparent", border: `1.5px dotted ${color}`, color: "var(--ink, #241F1A)", fontStyle: "italic" };
+  else if (ev.status === "Complete") style = { ...base, background: color, border: `1.5px solid ${color}`, color: readableOn(color), opacity: 0.6 };
   else style = { ...base, background: color, border: `1.5px solid ${color}`, color: readableOn(color) };
-  return <button onClick={onClick} style={style} title={`${ev.title} — ${ev.status}`}>{ev.status === "Tentative" ? "? " : ""}{ev.title}</button>;
+  return <button onClick={onClick} style={style} title={`${ev.title} — ${ev.status}`}>{ev.status === "Tentative" ? "? " : ev.status === "Complete" ? "✓ " : ""}{ev.title}</button>;
 }
 
 function ClientCalendar({ data }) {
   const episodes = data.episodes;
-  const allEvents = (data.events || []).filter((e) => e.clientVisible !== false && e.date);
+  const allEvents = calendarEvents(data).filter((e) => e.clientVisible !== false && e.date);
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [view, setView] = useState("month");
   const [episodeFilter, setEpisodeFilter] = useState("");
   const [hideCancelled, setHideCancelled] = useState(false);
+  const [showFilming, setShowFilming] = useState(true);
   const [selectedDay, setSelectedDay] = useState(null);
   useEffect(() => { if (typeof window !== "undefined" && window.innerWidth < 640) setView("list"); }, []);
 
-  const events = allEvents.filter((e) => (!episodeFilter || e.episodeId === episodeFilter) && !(hideCancelled && e.status === "Cancelled"));
+  const events = allEvents.filter((e) => (!episodeFilter || e.episodeId === episodeFilter) && !(hideCancelled && e.status === "Cancelled") && (showFilming || !e.auto));
   const year = cursor.getFullYear(), month = cursor.getMonth();
   const firstDow = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -403,6 +436,11 @@ function ClientCalendar({ data }) {
           <label style={{ fontSize: 11.5, color: "var(--mute, #8A8272)", display: "flex", alignItems: "center", gap: 5 }}>
             <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} /> Hide cancelled
           </label>
+          {allEvents.some((e) => e.auto) && (
+            <label style={{ fontSize: 11.5, color: "var(--mute, #8A8272)", display: "flex", alignItems: "center", gap: 5 }}>
+              <input type="checkbox" checked={showFilming} onChange={(e) => setShowFilming(e.target.checked)} /> Show filming days
+            </label>
+          )}
           <div style={{ display: "flex", gap: 3, background: "var(--bg2, #F1EBDD)", borderRadius: 8, padding: 3 }}>
             {["month", "list"].map((v) => (
               <button key={v} onClick={() => setView(v)} style={{ padding: "4px 11px", borderRadius: 6, border: "none", fontSize: 11.5, background: view === v ? "var(--ink, #241F1A)" : "transparent", color: view === v ? "var(--bg, #F8F4EC)" : "var(--mute, #8A8272)" }}>
@@ -414,8 +452,10 @@ function ClientCalendar({ data }) {
       </div>
 
       <div className="mono" style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 10, color: "var(--mute, #8A8272)", marginBottom: 12 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 22, height: 10, borderRadius: 3, background: GOLD, opacity: 0.6 }} />Complete</span>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 22, height: 10, borderRadius: 3, background: GOLD }} />Confirmed</span>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 22, height: 10, borderRadius: 3, background: GOLD + "22", border: `1.5px dashed ${GOLD}` }} />Tentative</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 22, height: 10, borderRadius: 3, border: `1.5px dotted ${GOLD}` }} />Postponed</span>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ textDecoration: "line-through" }}>Cancelled</span></span>
         <span>Colors match each episode</span>
       </div>
@@ -469,15 +509,16 @@ function ClientOverview({ data, openEpisode }) {
 
   const totalInterviews = data.interviews.length;
   const totalSupp = data.interviews.filter((i) => i.type === "Supplementary Voice").length;
-  const totalDays = data.productionDays.length;
-  const cities = new Set(data.productionDays.map((d) => d.city).filter(Boolean));
-  const states = new Set(data.productionDays.map((d) => d.state).filter(Boolean));
-  const countries = new Set(data.productionDays.map((d) => d.country).filter(Boolean));
+  const totalDays = doneDays(data).length;
+  const upcomingCount = upcomingDays(data).length;
+  const cities = new Set(doneDays(data).map((d) => d.city).filter(Boolean));
+  const states = new Set(doneDays(data).map((d) => d.state).filter(Boolean));
+  const countries = new Set(doneDays(data).map((d) => d.country).filter(Boolean));
   const hours = data.episodes.reduce((a, e) => a + (Number(e.hoursFootage) || 0), 0);
   const dataTB = data.episodes.reduce((a, e) => a + (Number(e.dataSizeTB) || 0), 0).toFixed(1);
 
   const byCountry = {};
-  data.productionDays.forEach((d) => {
+  doneDays(data).forEach((d) => {
     if (!d.country) return;
     byCountry[d.country] = byCountry[d.country] || new Set();
     if (d.city) byCountry[d.country].add(d.city);
@@ -489,8 +530,8 @@ function ClientOverview({ data, openEpisode }) {
   const last30 = data.milestones.filter((m) => { const d = parseDate(m.date); return d && (today - d) >= 0 && (today - d) <= 30 * msDay; }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const next30 = data.milestones.filter((m) => { const d = parseDate(m.date); return d && (d - today) > 0 && (d - today) <= 30 * msDay; }).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
   const todayISO = toISO(today.getFullYear(), today.getMonth(), today.getDate());
-  const comingUp = (data.events || [])
-    .filter((e) => e.clientVisible !== false && e.date && e.status !== "Cancelled" && (e.endDate && e.endDate >= e.date ? e.endDate : e.date) >= todayISO)
+  const comingUp = calendarEvents(data)
+    .filter((e) => e.clientVisible !== false && e.date && (e.status === "Confirmed" || e.status === "Tentative") && (e.endDate && e.endDate >= e.date ? e.endDate : e.date) >= todayISO)
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 3);
   const jumpToCalendar = () => { const el = document.getElementById("calendar-section"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); };
@@ -564,6 +605,7 @@ function ClientOverview({ data, openEpisode }) {
         <StatBlock value={totalInterviews} label="Interviews" icon={Users} />
         <StatBlock value={totalSupp} label="Supplementary Voices" icon={Users} />
         <StatBlock value={totalDays} label="Production Days" icon={Calendar} />
+        <StatBlock value={upcomingCount} label="Upcoming Days" icon={CalendarDays} />
         <StatBlock value={cities.size} label="Cities" icon={MapPin} />
         <StatBlock value={countries.size} label="Countries" icon={Compass} />
         <StatBlock value={hours} label="Hours of Footage" icon={Video} />
@@ -602,8 +644,8 @@ function ClientOverview({ data, openEpisode }) {
             const comp = episodeCompletion(ep);
             const accent = ep.accentColor || GOLD;
             const epInterviews = data.interviews.filter((i) => i.episodeId === ep.id).length;
-            const epDays = data.productionDays.filter((d) => d.episodeId === ep.id).length;
-            const epLocs = new Set(data.productionDays.filter((d) => d.episodeId === ep.id).map((d) => d.location)).size;
+            const epDays = doneDays(data).filter((d) => d.episodeId === ep.id).length;
+            const epLocs = new Set(doneDays(data).filter((d) => d.episodeId === ep.id).map((d) => d.location)).size;
             return (
               <button key={ep.id} onClick={() => openEpisode(ep.id)} className="card-hover" style={{ "--accent": accent, textAlign: "left", background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderTop: ep.coverImageUrl ? "1px solid var(--line, #E3DBC9)" : `3px solid ${accent}`, borderRadius: 14, padding: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
                 {ep.coverImageUrl && <img src={ep.coverImageUrl} alt="" style={{ width: "100%", height: 130, objectFit: "cover" }} onError={handleImgError} />}
@@ -652,7 +694,7 @@ function ClientOverview({ data, openEpisode }) {
       )}
 
       {/* Calendar */}
-      {(data.events || []).some((e) => e.clientVisible !== false && e.date) && (
+      {calendarEvents(data).some((e) => e.clientVisible !== false && e.date) && (
         <div id="calendar-section" style={{ padding: "0 40px 40px", scrollMarginTop: 16 }}>
           <h2 className="serif" style={{ fontSize: 22, marginBottom: 16 }}>Calendar</h2>
           <ClientCalendar data={data} />
@@ -702,7 +744,7 @@ function ClientEpisode({ data, ep, back }) {
   const comp = episodeCompletion(ep);
   const accent = ep.accentColor || GOLD;
   const interviews = data.interviews.filter((i) => i.episodeId === ep.id);
-  const days = data.productionDays.filter((d) => d.episodeId === ep.id);
+  const days = doneDays(data).filter((d) => d.episodeId === ep.id);
   const locSet = new Set(days.map((d) => d.location).filter(Boolean));
   const citySet = new Set(days.map((d) => d.city).filter(Boolean));
   const stateSet = new Set(days.map((d) => d.state).filter(Boolean));
@@ -1270,7 +1312,7 @@ function ProducerDays({ data, update }) {
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
-  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", notes: "" };
+  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", status: "Complete", notes: "" };
   const [form, setForm] = useState(blankForm);
   const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
   const openEdit = (id) => {
@@ -1289,9 +1331,10 @@ function ProducerDays({ data, update }) {
     setModal(false); setEditingId(null); setForm(blankForm);
   };
   const del = (id) => update({ ...data, productionDays: data.productionDays.filter((d) => d.id !== id) });
-  const [filters, setFilters] = useState({ episodeId: "", search: "", dateFrom: "", dateTo: "" });
+  const [filters, setFilters] = useState({ episodeId: "", search: "", dateFrom: "", dateTo: "", status: "" });
   const filteredDays = data.productionDays.filter((d) => {
     if (filters.episodeId && d.episodeId !== filters.episodeId) return false;
+    if (filters.status && (d.status || "Complete") !== filters.status) return false;
     if (filters.dateFrom && (!d.date || d.date < filters.dateFrom)) return false;
     if (filters.dateTo && (!d.date || d.date > filters.dateTo)) return false;
     if (filters.search) {
@@ -1309,7 +1352,7 @@ function ProducerDays({ data, update }) {
       if (/^episode$/i.test(cols[0] || "")) return; // skip header row
       const episodeId = matchEpisode(data, cols[0]);
       if (!episodeId) { skipped++; return; }
-      newDays.push({ id: uid("pd"), episodeId, date: cols[1] || "", city: cols[2] || "", state: cols[3] || "", country: cols[4] || "", location: cols[5] || "", type: cols[6] || "", notes: "" });
+      newDays.push({ id: uid("pd"), episodeId, date: cols[1] || "", city: cols[2] || "", state: cols[3] || "", country: cols[4] || "", location: cols[5] || "", type: cols[6] || "", status: EVENT_STATUSES.find((t) => t.toLowerCase() === (cols[7] || "").toLowerCase()) || "Complete", notes: "" });
       added++;
     });
     update({ ...data, productionDays: [...data.productionDays, ...newDays] });
@@ -1326,19 +1369,19 @@ function ProducerDays({ data, update }) {
           Import CSV
         </button>
       </div>
-      <FilterBar episodes={data.episodes} filters={filters} setFilters={setFilters} searchPlaceholder="Search city, state, country, location…" />
+      <FilterBar episodes={data.episodes} filters={filters} setFilters={setFilters} searchPlaceholder="Search city, state, country, location…" statusOptions={EVENT_STATUSES} />
       {filteredDays.length !== data.productionDays.length && <p style={{ fontSize: 11.5, color: MUTE, marginTop: -8, marginBottom: 10 }}>Showing {filteredDays.length} of {data.productionDays.length}</p>}
-      <DataTable columns={["Episode", "Date", "City", "Country", "Location"]} rows={filteredDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location] }))} onDelete={del} onEdit={openEdit} />
+      <DataTable columns={["Episode", "Date", "City", "Country", "Location", "Status"]} rows={filteredDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location, <select key="s" value={d.status || "Complete"} onChange={(e) => update({ ...data, productionDays: data.productionDays.map((x) => (x.id === d.id ? { ...x, status: e.target.value } : x)) })} style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${EVENT_STATUS_COLOR[d.status || "Complete"] || LINE}`, color: EVENT_STATUS_COLOR[d.status || "Complete"] || INK, background: "#fff" }}>{EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}</select>] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Import Production Days" onClose={() => setBulkModal(false)}>
-          <button type="button" onClick={() => downloadTemplate("production-days-template.csv", ["Episode", "Date", "City", "State", "Country", "Location", "Type"], ["Episode 1", "2026-03-14", "Portland", "OR", "USA", "Community Center", "Interview"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
+          <button type="button" onClick={() => downloadTemplate("production-days-template.csv", ["Episode", "Date", "City", "State", "Country", "Location", "Type", "Status"], ["Episode 1", "2026-03-14", "Portland", "OR", "USA", "Community Center", "Interview", "Complete"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
             Download a blank CSV template
           </button>
           <p style={{ fontSize: 12, color: MUTE, marginBottom: 8 }}>
             Open that template in Excel or Google Sheets, fill in your rows, save/export as CSV, then upload it below. Columns:
           </p>
           <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>
-            Episode (title or number), Date, City, State, Country, Location, Type
+            Episode (title or number), Date, City, State, Country, Location, Type, Status (optional: Complete, Confirmed, Tentative, Postponed, Cancelled; blank means Complete)
           </p>
           <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Episode is required. Header row is fine, it's skipped automatically.</p>
           <FileImportInput onText={setBulkText} />
@@ -1359,6 +1402,8 @@ function ProducerDays({ data, update }) {
           <Field label="State / Province"><input style={inputStyle} value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></Field>
           <Field label="Country"><input style={inputStyle} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></Field>
           <Field label="Location Name"><input style={inputStyle} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
+          <Field label="Status"><select style={inputStyle} value={form.status || "Complete"} onChange={(e) => setForm({ ...form, status: e.target.value })}>{EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}</select></Field>
+          <p style={{ fontSize: 11, color: MUTE, margin: "-6px 0 10px" }}>Only Complete days count toward production days, cities, and countries. Confirmed days count as Upcoming days. Tentative, Postponed, and Cancelled days appear on the calendar only.</p>
           <Field label="Production Type"><input style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="Interview, B-roll, Observational..." /></Field>
           <Field label="Notes"><textarea style={inputStyle} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
           <button onClick={save} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6 }}>{editingId ? "Save Changes" : "Save Production Day"}</button>
@@ -1475,7 +1520,7 @@ function ProducerCalendar({ data, update }) {
   return (
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Calendar</h1>
-      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event is Confirmed, Tentative or Cancelled — that's shown to clients as solid, dashed, or struck-through on the Calendar section of Client View. Untick "Show on client calendar" for anything internal.</p>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event has a status (Complete, Confirmed, Tentative, Postponed, or Cancelled), and each one looks different to clients on the Calendar section of Client View. Untick "Show on client calendar" for anything internal. Filming days logged in the Production Days tab already appear on the client calendar automatically, so only add events here for things that aren't production days: travel, reviews, deliveries, and future shoots that might change.</p>
       <div style={{ display: "flex", gap: 10 }}>
         <AddBar label="Add Event" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>Import CSV</button>
