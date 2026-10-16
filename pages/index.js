@@ -231,7 +231,6 @@ const normalizeDate = (str) => {
   return isNaN(d) ? "" : toISO(d.getFullYear(), d.getMonth(), d.getDate());
 };
 const doneDays = (data) => (data.productionDays || []).filter((d) => !d.status || d.status === "Complete");
-const upcomingDays = (data) => (data.productionDays || []).filter((d) => d.status === "Confirmed");
 const TBD_RX = /^(tbd|tba|to be determined)\b[\s:–—-]*(.*)$/i;
 const isTBDShown = (e) => !e.date && e.dateTBD && ["Confirmed", "Tentative", "Postponed"].includes(e.status) && e.clientVisible !== false;
 function calendarEvents(data) {
@@ -256,6 +255,21 @@ function calendarEvents(data) {
   });
   return [...manual, ...auto];
 }
+// "Upcoming Days": every Confirmed item on the client calendar (production days and calendar events).
+// Each calendar day counts once; multi-day events count every day; Confirmed items with a TBD date count once each.
+const upcomingDayCount = (data) => {
+  const days = new Set();
+  let tbd = 0;
+  calendarEvents(data).forEach((e) => {
+    if (e.status !== "Confirmed" || e.clientVisible === false) return;
+    if (!e.date) { tbd++; return; }
+    const end = e.endDate && e.endDate > e.date ? e.endDate : e.date;
+    const d = new Date(e.date + "T00:00:00");
+    const last = new Date(end + "T00:00:00");
+    for (let n = 0; n < 90 && d <= last; n++) { days.add(toISO(d.getFullYear(), d.getMonth(), d.getDate())); d.setDate(d.getDate() + 1); }
+  });
+  return days.size + tbd;
+};
 function readableOn(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
   if (!m) return "#fff";
@@ -523,7 +537,7 @@ function ClientOverview({ data, openEpisode }) {
   const totalInterviews = data.interviews.length;
   const totalSupp = data.interviews.filter((i) => i.type === "Supplementary Voice").length;
   const totalDays = doneDays(data).length;
-  const upcomingCount = upcomingDays(data).length;
+  const upcomingCount = upcomingDayCount(data);
   const cities = new Set(doneDays(data).map((d) => d.city).filter(Boolean));
   const states = new Set(doneDays(data).map((d) => d.state).filter(Boolean));
   const countries = new Set(doneDays(data).map((d) => d.country).filter(Boolean));
@@ -1541,7 +1555,7 @@ function ProducerCalendar({ data, update }) {
   return (
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Calendar</h1>
-      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event has a status (Complete, Confirmed, Tentative, Postponed, or Cancelled), and each one looks different to clients on the Calendar section of Client View. Untick "Show on client calendar" for anything internal. Notes are always internal; use the Client note field for anything clients should read. Filming days logged in the Production Days tab already appear on the client calendar automatically, so only add events here for things that aren't production days: travel, reviews, deliveries, and future shoots that might change.</p>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event has a status (Complete, Confirmed, Tentative, Postponed, or Cancelled), and each one looks different to clients on the Calendar section of Client View. Untick "Show on client calendar" for anything internal. Confirmed events count toward the Upcoming Days number at the top of Client View (each calendar day counts once). Notes are always internal; use the Client note field for anything clients should read. Filming days logged in the Production Days tab already appear on the client calendar automatically, so only add events here for things that aren't production days: travel, reviews, deliveries, and future shoots that might change.</p>
       <div style={{ display: "flex", gap: 10 }}>
         <AddBar label="Add Event" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>Import CSV</button>
