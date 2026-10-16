@@ -216,7 +216,7 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const toISO = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
 const eventCoversDay = (ev, iso) => !!ev.date && iso >= ev.date && iso <= (ev.endDate && ev.endDate >= ev.date ? ev.endDate : ev.date);
 const fmtShort = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return isNaN(d) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
-const fmtEventDates = (ev) => (ev.endDate && ev.endDate > ev.date ? `${fmtShort(ev.date)} – ${fmtShort(ev.endDate)}` : fmtShort(ev.date));
+const fmtEventDates = (ev) => (!ev.date ? "Date TBD" + (ev.dateNote ? " · " + ev.dateNote : "") : ev.endDate && ev.endDate > ev.date ? `${fmtShort(ev.date)} – ${fmtShort(ev.endDate)}` : fmtShort(ev.date));
 const normalizeDate = (str) => {
   if (!str) return "";
   const t = String(str).trim();
@@ -232,22 +232,25 @@ const normalizeDate = (str) => {
 };
 const doneDays = (data) => (data.productionDays || []).filter((d) => !d.status || d.status === "Complete");
 const upcomingDays = (data) => (data.productionDays || []).filter((d) => d.status === "Confirmed");
+const TBD_RX = /^(tbd|tba|to be determined)\b[\s:–—-]*(.*)$/i;
+const isTBDShown = (e) => !e.date && e.dateTBD && ["Confirmed", "Tentative", "Postponed"].includes(e.status) && e.clientVisible !== false;
 function calendarEvents(data) {
-  const manual = (data.events || []).filter((e) => e.date);
+  const manual = (data.events || []).filter((e) => e.date || e.dateTBD);
   const seen = new Set();
   const auto = [];
   (data.productionDays || []).forEach((d) => {
-    const date = normalizeDate(d.date);
-    if (!date) return;
+    const date = d.dateTBD ? "" : normalizeDate(d.date);
+    const raw = String(d.date || "").trim();
+    const note = d.dateNote || (date || /^(tbd|tba|to be determined)$/i.test(raw) ? "" : raw);
     const name = d.location || "";
     const region = [d.city, d.state, d.country].filter(Boolean).join(", ");
-    const key = [d.episodeId, date, name, region, d.status || "Complete"].join("|");
+    const key = [d.episodeId, date || "tbd", name, region, d.status || "Complete"].join("|");
     if (seen.has(key)) return;
     seen.add(key);
     auto.push({
       id: "pd-" + d.id,
       title: (d.type || "Production day") + (name ? " — " + name : d.city ? " — " + d.city : ""),
-      date, endDate: "", type: "Shoot", status: d.status || "Complete",
+      date, endDate: "", dateTBD: !date, dateNote: !date ? note : "", type: "Shoot", status: d.status || "Complete",
       episodeId: d.episodeId || "", location: region, notes: "", clientVisible: true, auto: true,
     });
   });
@@ -371,7 +374,8 @@ function EventChip({ ev, episodes, onClick }) {
 
 function ClientCalendar({ data }) {
   const episodes = data.episodes;
-  const allEvents = calendarEvents(data).filter((e) => e.clientVisible !== false && e.date);
+  const everything = calendarEvents(data).filter((e) => e.clientVisible !== false);
+  const allEvents = everything.filter((e) => e.date);
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [view, setView] = useState("month");
   const [episodeFilter, setEpisodeFilter] = useState("");
@@ -381,6 +385,7 @@ function ClientCalendar({ data }) {
   useEffect(() => { if (typeof window !== "undefined" && window.innerWidth < 640) setView("list"); }, []);
 
   const events = allEvents.filter((e) => (!episodeFilter || e.episodeId === episodeFilter) && !(hideCancelled && e.status === "Cancelled") && (showFilming || !e.auto));
+  const tbdEvents = everything.filter((e) => isTBDShown(e) && (!episodeFilter || e.episodeId === episodeFilter) && (showFilming || !e.auto));
   const year = cursor.getFullYear(), month = cursor.getMonth();
   const firstDow = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -410,7 +415,7 @@ function ClientCalendar({ data }) {
           <div className="mono" style={{ fontSize: 10.5, color: "var(--mute, #8A8272)", marginTop: 3 }}>
             {fmtEventDates(ev)} · {ev.type}{epObj ? " · " + epObj.title : " · Series-wide"}{ev.location ? " · " + ev.location : ""}
           </div>
-          {ev.notes && <div style={{ fontSize: 12.5, marginTop: 5 }}>{ev.notes}</div>}
+          {ev.clientNote && <div style={{ fontSize: 12.5, marginTop: 5, whiteSpace: "pre-line" }}>{ev.clientNote}</div>}
         </div>
       </div>
     );
@@ -436,7 +441,7 @@ function ClientCalendar({ data }) {
           <label style={{ fontSize: 11.5, color: "var(--mute, #8A8272)", display: "flex", alignItems: "center", gap: 5 }}>
             <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} /> Hide cancelled
           </label>
-          {allEvents.some((e) => e.auto) && (
+          {everything.some((e) => e.auto) && (
             <label style={{ fontSize: 11.5, color: "var(--mute, #8A8272)", display: "flex", alignItems: "center", gap: 5 }}>
               <input type="checkbox" checked={showFilming} onChange={(e) => setShowFilming(e.target.checked)} /> Show filming days
             </label>
@@ -495,6 +500,14 @@ function ClientCalendar({ data }) {
           {dayEvents.length === 0 ? <p style={{ color: "var(--mute, #8A8272)", fontSize: 13, padding: "8px 0 12px", margin: 0 }}>Nothing scheduled.</p> : dayEvents.map((ev) => <EventRow key={ev.id} ev={ev} />)}
         </div>
       )}
+      {tbdEvents.length > 0 && (
+        <div style={{ marginTop: 22 }}>
+          <div className="mono" style={{ fontSize: 11, color: "var(--mute, #8A8272)", textTransform: "uppercase", marginBottom: 6 }}>Dates to be determined</div>
+          <div style={{ background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 12, padding: "0 18px" }}>
+            {tbdEvents.map((ev) => <EventRow key={ev.id} ev={ev} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -534,6 +547,7 @@ function ClientOverview({ data, openEpisode }) {
     .filter((e) => e.clientVisible !== false && e.date && (e.status === "Confirmed" || e.status === "Tentative") && (e.endDate && e.endDate >= e.date ? e.endDate : e.date) >= todayISO)
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 3);
+  const tbdCount = calendarEvents(data).filter(isTBDShown).length;
   const jumpToCalendar = () => { const el = document.getElementById("calendar-section"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); };
 
   return (
@@ -568,7 +582,7 @@ function ClientOverview({ data, openEpisode }) {
       </div>
 
       {/* Coming up */}
-      {comingUp.length > 0 && (
+      {(comingUp.length > 0 || tbdCount > 0) && (
         <div style={{ padding: "20px 40px 0" }}>
           <div style={{ background: "var(--surface, #fff)", border: "1px solid var(--line, #E3DBC9)", borderRadius: 14, padding: "14px 18px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
@@ -596,6 +610,7 @@ function ClientOverview({ data, openEpisode }) {
                 );
               })}
             </div>
+            {tbdCount > 0 && <div style={{ marginTop: comingUp.length > 0 ? 12 : 0, fontSize: 12.5, color: "var(--mute, #8A8272)" }}>{comingUp.length > 0 ? "+ " : ""}{tbdCount} with dates to be determined</div>}
           </div>
         </div>
       )}
@@ -694,7 +709,7 @@ function ClientOverview({ data, openEpisode }) {
       )}
 
       {/* Calendar */}
-      {calendarEvents(data).some((e) => e.clientVisible !== false && e.date) && (
+      {calendarEvents(data).some((e) => e.clientVisible !== false && (e.date || isTBDShown(e))) && (
         <div id="calendar-section" style={{ padding: "0 40px 40px", scrollMarginTop: 16 }}>
           <h2 className="serif" style={{ fontSize: 22, marginBottom: 16 }}>Calendar</h2>
           <ClientCalendar data={data} />
@@ -1141,13 +1156,10 @@ function Modal({ title, onClose, children }) {
 }
 
 function parseBulkRows(text) {
-  // Tab-separated (typical when pasted from Excel/Sheets) — simple split is safe here
-  // since tabs rarely appear inside real field values.
-  if (text.includes("\t")) {
-    return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.split("\t").map((c) => c.trim()));
-  }
-  // Comma-separated (a real .csv file) — needs proper quote handling so commas
-  // inside a field (e.g. "Portland, OR") don't get treated as column breaks.
+  // One quote-aware parser for both uploaded CSV files (commas) and text pasted from a
+  // spreadsheet (tabs). Cells wrapped in quotes can contain commas, tabs and line breaks.
+  const firstLine = text.split(/\r?\n/)[0] || "";
+  const delim = firstLine.includes("\t") ? "\t" : ",";
   const rows = [];
   let row = [], field = "", inQuotes = false;
   for (let i = 0; i < text.length; i++) {
@@ -1155,8 +1167,8 @@ function parseBulkRows(text) {
     if (inQuotes) {
       if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
       else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ",") { row.push(field.trim()); field = ""; }
+    } else if (c === '"' && field.trim() === "") inQuotes = true;
+    else if (c === delim) { row.push(field.trim()); field = ""; }
     else if (c === "\n" || c === "\r") {
       if (c === "\r" && text[i + 1] === "\n") i++;
       row.push(field.trim()); field = "";
@@ -1312,7 +1324,7 @@ function ProducerDays({ data, update }) {
   const [bulkModal, setBulkModal] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
-  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", status: "Complete", notes: "" };
+  const blankForm = { episodeId: data.episodes[0]?.id, date: "", city: "", state: "", country: "", location: "", type: "", status: "Complete", dateTBD: false, dateNote: "", notes: "" };
   const [form, setForm] = useState(blankForm);
   const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
   const openEdit = (id) => {
@@ -1323,10 +1335,11 @@ function ProducerDays({ data, update }) {
     setModal(true);
   };
   const save = () => {
+    const clean = form.dateTBD ? { ...form, date: "" } : { ...form, dateTBD: false, dateNote: "" };
     if (editingId) {
-      update({ ...data, productionDays: data.productionDays.map((d) => (d.id === editingId ? { ...d, ...form } : d)) });
+      update({ ...data, productionDays: data.productionDays.map((d) => (d.id === editingId ? { ...d, ...clean } : d)) });
     } else {
-      update({ ...data, productionDays: [...data.productionDays, { id: uid("pd"), ...form }] });
+      update({ ...data, productionDays: [...data.productionDays, { id: uid("pd"), ...clean }] });
     }
     setModal(false); setEditingId(null); setForm(blankForm);
   };
@@ -1352,7 +1365,7 @@ function ProducerDays({ data, update }) {
       if (/^episode$/i.test(cols[0] || "")) return; // skip header row
       const episodeId = matchEpisode(data, cols[0]);
       if (!episodeId) { skipped++; return; }
-      newDays.push({ id: uid("pd"), episodeId, date: cols[1] || "", city: cols[2] || "", state: cols[3] || "", country: cols[4] || "", location: cols[5] || "", type: cols[6] || "", status: EVENT_STATUSES.find((t) => t.toLowerCase() === (cols[7] || "").toLowerCase()) || "Complete", notes: "" });
+      newDays.push({ id: uid("pd"), episodeId, date: TBD_RX.test((cols[1] || "").trim()) ? "" : (cols[1] || ""), dateTBD: TBD_RX.test((cols[1] || "").trim()), dateNote: (TBD_RX.exec((cols[1] || "").trim()) || [])[2] ? TBD_RX.exec((cols[1] || "").trim())[2].trim() : "", city: cols[2] || "", state: cols[3] || "", country: cols[4] || "", location: cols[5] || "", type: cols[6] || "", status: EVENT_STATUSES.find((t) => t.toLowerCase() === (cols[7] || "").toLowerCase()) || "Complete", notes: "" });
       added++;
     });
     update({ ...data, productionDays: [...data.productionDays, ...newDays] });
@@ -1371,7 +1384,7 @@ function ProducerDays({ data, update }) {
       </div>
       <FilterBar episodes={data.episodes} filters={filters} setFilters={setFilters} searchPlaceholder="Search city, state, country, location…" statusOptions={EVENT_STATUSES} />
       {filteredDays.length !== data.productionDays.length && <p style={{ fontSize: 11.5, color: MUTE, marginTop: -8, marginBottom: 10 }}>Showing {filteredDays.length} of {data.productionDays.length}</p>}
-      <DataTable columns={["Episode", "Date", "City", "Country", "Location", "Status"]} rows={filteredDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.date, d.city, d.country, d.location, <select key="s" value={d.status || "Complete"} onChange={(e) => update({ ...data, productionDays: data.productionDays.map((x) => (x.id === d.id ? { ...x, status: e.target.value } : x)) })} style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${EVENT_STATUS_COLOR[d.status || "Complete"] || LINE}`, color: EVENT_STATUS_COLOR[d.status || "Complete"] || INK, background: "#fff" }}>{EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}</select>] }))} onDelete={del} onEdit={openEdit} />
+      <DataTable columns={["Episode", "Date", "City", "Country", "Location", "Status"]} rows={filteredDays.map((d) => ({ id: d.id, cells: [data.episodes.find((e) => e.id === d.episodeId)?.title || "—", d.dateTBD ? "TBD" + (d.dateNote ? " (" + d.dateNote + ")" : "") : d.date, d.city, d.country, d.location, <select key="s" value={d.status || "Complete"} onChange={(e) => update({ ...data, productionDays: data.productionDays.map((x) => (x.id === d.id ? { ...x, status: e.target.value } : x)) })} style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${EVENT_STATUS_COLOR[d.status || "Complete"] || LINE}`, color: EVENT_STATUS_COLOR[d.status || "Complete"] || INK, background: "#fff" }}>{EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}</select>] }))} onDelete={del} onEdit={openEdit} />
       {bulkModal && (
         <Modal title="Import Production Days" onClose={() => setBulkModal(false)}>
           <button type="button" onClick={() => downloadTemplate("production-days-template.csv", ["Episode", "Date", "City", "State", "Country", "Location", "Type", "Status"], ["Episode 1", "2026-03-14", "Portland", "OR", "USA", "Community Center", "Interview", "Complete"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>
@@ -1383,7 +1396,7 @@ function ProducerDays({ data, update }) {
           <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>
             Episode (title or number), Date, City, State, Country, Location, Type, Status (optional: Complete, Confirmed, Tentative, Postponed, Cancelled; blank means Complete)
           </p>
-          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Episode is required. Header row is fine, it's skipped automatically.</p>
+          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Only Episode is required. If a date isn't set yet, type TBD in the Date column (add rough timing after a dash, like TBD - early November). Header row is fine, it's skipped automatically.</p>
           <FileImportInput onText={setBulkText} />
           <details style={{ marginBottom: 10 }}>
             <summary style={{ fontSize: 11.5, color: MUTE, cursor: "pointer" }}>Or paste rows directly instead</summary>
@@ -1397,7 +1410,14 @@ function ProducerDays({ data, update }) {
       {modal && (
         <Modal title={editingId ? "Edit Production Day" : "Add Production Day"} onClose={() => { setModal(false); setEditingId(null); }}>
           <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
-          <Field label="Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 10 }}>
+            <input type="checkbox" checked={!!form.dateTBD} onChange={(e) => setForm({ ...form, dateTBD: e.target.checked })} /> Date to be determined
+          </label>
+          {form.dateTBD ? (
+            <Field label="Expected timing (optional)"><input style={inputStyle} value={form.dateNote || ""} onChange={(e) => setForm({ ...form, dateNote: e.target.value })} placeholder="e.g. early November" /></Field>
+          ) : (
+            <Field label="Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+          )}
           <Field label="City"><input style={inputStyle} value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></Field>
           <Field label="State / Province"><input style={inputStyle} value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value })} /></Field>
           <Field label="Country"><input style={inputStyle} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} /></Field>
@@ -1464,7 +1484,7 @@ function ProducerCalendar({ data, update }) {
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null);
   const [filters, setFilters] = useState({ episodeId: "", search: "", dateFrom: "", dateTo: "", status: "" });
-  const blankForm = { title: "", episodeId: "", type: "Shoot", status: "Confirmed", date: "", endDate: "", location: "", notes: "", clientVisible: true };
+  const blankForm = { title: "", episodeId: "", type: "Shoot", status: "Confirmed", date: "", endDate: "", dateTBD: false, dateNote: "", location: "", notes: "", clientNote: "", clientVisible: true };
   const [form, setForm] = useState(blankForm);
   const openAdd = () => { setEditingId(null); setForm(blankForm); setModal(true); };
   const openEdit = (id) => {
@@ -1475,7 +1495,7 @@ function ProducerCalendar({ data, update }) {
     setModal(true);
   };
   const save = () => {
-    const clean = { ...form, endDate: form.endDate && form.endDate >= form.date ? form.endDate : "" };
+    const clean = form.dateTBD ? { ...form, date: "", endDate: "" } : { ...form, dateTBD: false, dateNote: "", endDate: form.endDate && form.endDate >= form.date ? form.endDate : "" };
     if (editingId) update({ ...data, events: events.map((x) => (x.id === editingId ? { ...x, ...clean } : x)) });
     else update({ ...data, events: [...events, { id: uid("ev"), ...clean }] });
     setModal(false); setEditingId(null); setForm(blankForm);
@@ -1493,7 +1513,7 @@ function ProducerCalendar({ data, update }) {
       if (!hay.includes(filters.search.toLowerCase())) return false;
     }
     return true;
-  }).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  }).sort((a, b) => (!a.date && !b.date ? 0 : !a.date ? 1 : !b.date ? -1 : a.date.localeCompare(b.date)));
 
   const importBulk = () => {
     const rows = parseBulkRows(bulkText);
@@ -1502,14 +1522,15 @@ function ProducerCalendar({ data, update }) {
     rows.forEach((cols) => {
       if (/^title$/i.test(cols[0] || "")) return; // header row
       const title = cols[0];
-      const date = normalizeDate(cols[4]);
+      const tbd = TBD_RX.exec((cols[4] || "").trim());
+      const date = tbd ? "" : normalizeDate(cols[4]);
       let episodeId = "";
       if (cols[1]) { episodeId = matchEpisode(data, cols[1]); if (!episodeId) { skipped++; return; } }
-      if (!title || !date) { skipped++; return; }
+      if (!title || (!date && !tbd)) { skipped++; return; }
       const type = EVENT_TYPES.find((t) => t.toLowerCase() === (cols[2] || "").toLowerCase()) || "Other";
       const status = EVENT_STATUSES.find((t) => t.toLowerCase() === (cols[3] || "").toLowerCase()) || "Tentative";
       const endRaw = normalizeDate(cols[5]);
-      fresh.push({ id: uid("ev"), title, episodeId, type, status, date, endDate: endRaw && endRaw >= date ? endRaw : "", location: cols[6] || "", notes: cols[7] || "", clientVisible: true });
+      fresh.push({ id: uid("ev"), title, episodeId, type, status, date, dateTBD: !!tbd, dateNote: tbd ? tbd[2].trim() : "", endDate: date && endRaw && endRaw >= date ? endRaw : "", location: cols[6] || "", notes: cols[7] || "", clientNote: cols[9] || "", clientVisible: !/^(no|n|false|0|hidden|internal)$/i.test((cols[8] || "").trim()) });
       added++;
     });
     update({ ...data, events: [...events, ...fresh] });
@@ -1520,7 +1541,7 @@ function ProducerCalendar({ data, update }) {
   return (
     <div style={{ padding: 24 }}>
       <h1 className="serif" style={{ fontSize: 22, marginBottom: 14 }}>Calendar</h1>
-      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event has a status (Complete, Confirmed, Tentative, Postponed, or Cancelled), and each one looks different to clients on the Calendar section of Client View. Untick "Show on client calendar" for anything internal. Filming days logged in the Production Days tab already appear on the client calendar automatically, so only add events here for things that aren't production days: travel, reviews, deliveries, and future shoots that might change.</p>
+      <p style={{ fontSize: 12.5, color: MUTE, marginBottom: 14 }}>Future shoots, travel, reviews and deliveries. Each event has a status (Complete, Confirmed, Tentative, Postponed, or Cancelled), and each one looks different to clients on the Calendar section of Client View. Untick "Show on client calendar" for anything internal. Notes are always internal; use the Client note field for anything clients should read. Filming days logged in the Production Days tab already appear on the client calendar automatically, so only add events here for things that aren't production days: travel, reviews, deliveries, and future shoots that might change.</p>
       <div style={{ display: "flex", gap: 10 }}>
         <AddBar label="Add Event" onClick={openAdd} />
         <button onClick={() => { setBulkModal(true); setBulkResult(null); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${LINE}`, color: INK, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, marginBottom: 14, height: "fit-content" }}>Import CSV</button>
@@ -1551,22 +1572,32 @@ function ProducerCalendar({ data, update }) {
           <Field label="Status"><select style={inputStyle} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>{EVENT_STATUSES.map((st) => <option key={st}>{st}</option>)}</select></Field>
           <Field label="Episode"><select style={inputStyle} value={form.episodeId} onChange={(e) => setForm({ ...form, episodeId: e.target.value })}><option value="">Series-wide</option>{data.episodes.map((e) => <option key={e.id} value={e.id}>{e.title}</option>)}</select></Field>
           <Field label="Type"><select style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>{EVENT_TYPES.map((t) => <option key={t}>{t}</option>)}</select></Field>
-          <Field label="Start Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
-          <Field label="End Date (optional, for multi-day)"><input type="date" style={inputStyle} value={form.endDate} min={form.date || undefined} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 10 }}>
+            <input type="checkbox" checked={!!form.dateTBD} onChange={(e) => setForm({ ...form, dateTBD: e.target.checked })} /> Date to be determined
+          </label>
+          {form.dateTBD ? (
+            <Field label="Expected timing (optional)"><input style={inputStyle} value={form.dateNote || ""} onChange={(e) => setForm({ ...form, dateNote: e.target.value })} placeholder="e.g. early November" /></Field>
+          ) : (
+            <>
+              <Field label="Start Date"><input type="date" style={inputStyle} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
+              <Field label="End Date (optional, for multi-day)"><input type="date" style={inputStyle} value={form.endDate} min={form.date || undefined} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></Field>
+            </>
+          )}
           <Field label="Location"><input style={inputStyle} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} /></Field>
-          <Field label="Notes"><textarea style={{ ...inputStyle, minHeight: 60 }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+          <Field label="Notes (internal, never shown to clients)"><textarea style={{ ...inputStyle, minHeight: 60 }} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+          <Field label="Client note (optional, shown on the client calendar)"><textarea style={{ ...inputStyle, minHeight: 50 }} value={form.clientNote || ""} onChange={(e) => setForm({ ...form, clientNote: e.target.value })} /></Field>
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 6 }}>
             <input type="checkbox" checked={form.clientVisible !== false} onChange={(e) => setForm({ ...form, clientVisible: e.target.checked })} /> Show on client calendar
           </label>
-          <button onClick={save} disabled={!form.title || !form.date} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6, opacity: form.title && form.date ? 1 : 0.5 }}>{editingId ? "Save Changes" : "Save Event"}</button>
+          <button onClick={save} disabled={!form.title || (!form.date && !form.dateTBD)} style={{ width: "100%", background: INK, color: "#fff", border: "none", borderRadius: 8, padding: 10, fontSize: 13, marginTop: 6, opacity: form.title && (form.date || form.dateTBD) ? 1 : 0.5 }}>{editingId ? "Save Changes" : "Save Event"}</button>
         </Modal>
       )}
 
       {bulkModal && (
         <Modal title="Import Calendar Events" onClose={() => setBulkModal(false)}>
-          <button type="button" onClick={() => downloadTemplate("calendar-template.csv", ["Title", "Episode", "Type", "Status", "Start Date", "End Date", "Location", "Notes"], ["Uganda shoot", "Episode 6", "Shoot", "Tentative", "2026-09-14", "2026-09-20", "Kampala, Uganda", "Dates pending travel confirmation"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>Download a blank CSV template</button>
-          <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>Title, Episode (title/number, blank = series-wide), Type, Status (Confirmed/Tentative/Cancelled), Start Date, End Date, Location, Notes</p>
-          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Title and Start Date are required. Rows with no status import as Tentative, so nothing shows as confirmed by accident.</p>
+          <button type="button" onClick={() => downloadTemplate("calendar-template.csv", ["Title", "Episode", "Type", "Status", "Start Date", "End Date", "Location", "Notes (internal)", "Client Visible", "Client Note"], ["Uganda shoot", "Episode 6", "Shoot", "Tentative", "2026-09-14", "2026-09-20", "Kampala, Uganda", "Waiting on visa confirmation", "Yes", "Filming in Uganda"])} style={{ fontSize: 11.5, color: GOLD, background: "none", border: "none", textDecoration: "underline", padding: 0, marginBottom: 10, display: "block" }}>Download a blank CSV template</button>
+          <p className="mono" style={{ fontSize: 10.5, color: GOLD, marginBottom: 10, lineHeight: 1.6 }}>Title, Episode (title/number, blank = series-wide), Type, Status (Complete/Confirmed/Tentative/Postponed/Cancelled), Start Date, End Date, Location, Notes (internal), Client Visible (optional: Yes/No, blank means Yes), Client Note (optional)</p>
+          <p style={{ fontSize: 11.5, color: MUTE, marginBottom: 10 }}>Notes stay internal and are never shown to clients. Title and Start Date are required. If a date isn't set yet, type TBD in the Start Date column (add rough timing after a dash, like TBD - early November). Rows with no status import as Tentative, so nothing shows as confirmed by accident.</p>
           <FileImportInput onText={setBulkText} />
           <details style={{ marginBottom: 10 }}>
             <summary style={{ fontSize: 11.5, color: MUTE, cursor: "pointer" }}>Or paste rows directly instead</summary>
